@@ -48,6 +48,11 @@ PoHP = (U, P, E, C)
 - [研究報告：Proof of Human Participation 設計研究](docs/research/proof-of-human-participation.md)
 - [階段性實作計畫](docs/implementation-plan.md)
 
+## 應用方向
+
+- [Verifiable Human Coding Session：可驗證的人類程式碼編輯工作階段](docs/applications/verifiable-human-coding-session.md)  
+  以 VS Code extension／受控編輯環境記錄程式碼從 workspace baseline 到最終結果的可驗證 provenance，並與 Presence、Endpoint Integrity 證據結合。此方向驗證的是「程式碼如何在受監控 session 中形成」，不宣稱能單靠 IDE 證明開發者完全沒有使用 AI。
+
 ## 初期非目標
 
 本專案現階段**不宣稱**能做到以下事項：
