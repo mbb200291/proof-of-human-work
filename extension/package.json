@@ -2,7 +2,7 @@
   "name": "pohw-coding-monitor",
   "displayName": "PoHW Coding Monitor",
   "description": "Rule-based coding provenance monitor for VS Code (research prototype)",
-  "version": "0.3.1",
+  "version": "0.3.2",
   "publisher": "pohw-research",
   "private": true,
   "license": "MIT",
