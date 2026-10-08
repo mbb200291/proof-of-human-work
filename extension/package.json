@@ -1,0 +1,40 @@
+{
+  "name": "pohw-coding-monitor",
+  "displayName": "PoHW Coding Monitor",
+  "description": "Rule-based coding provenance monitor for VS Code (research prototype)",
+  "version": "0.1.0",
+  "publisher": "pohw-research",
+  "private": true,
+  "license": "MIT",
+  "engines": { "vscode": "^1.90.0" },
+  "categories": ["Other"],
+  "main": "./out/extension.js",
+  "activationEvents": ["onCommand:pohw.start", "onCommand:pohw.stop", "onCommand:pohw.report"],
+  "contributes": {
+    "commands": [
+      { "command": "pohw.start", "title": "PoHW: Start Monitoring" },
+      { "command": "pohw.stop", "title": "PoHW: Stop Monitoring" },
+      { "command": "pohw.report", "title": "PoHW: Show Provenance Report" }
+    ],
+    "configuration": {
+      "title": "PoHW Coding Monitor",
+      "properties": {
+        "pohw.maxFileBytes": { "type": "number", "default": 524288, "minimum": 1024, "description": "Skip files larger than this many bytes." },
+        "pohw.maxFiles": { "type": "number", "default": 2000, "minimum": 1, "description": "Maximum number of workspace files to initialize." },
+        "pohw.include": { "type": "string", "default": "**/*", "description": "VS Code glob of files to monitor." },
+        "pohw.exclude": { "type": "string", "default": "**/{.git,node_modules,dist,out,build,coverage,.venv,venv,.pohw}/**", "description": "VS Code glob of excluded files." }
+      }
+    }
+  },
+  "scripts": {
+    "build": "tsc -p .",
+    "test": "npm run build && node --test out/core.test.js",
+    "package": "vsce package --no-dependencies"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "@types/vscode": "^1.90.0",
+    "@vscode/vsce": "^3.0.0",
+    "typescript": "^5.6.0"
+  }
+}
