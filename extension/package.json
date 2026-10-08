@@ -2,7 +2,7 @@
   "name": "pohw-coding-monitor",
   "displayName": "PoHW Coding Monitor",
   "description": "Rule-based coding provenance monitor for VS Code (research prototype)",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "publisher": "pohw-research",
   "private": true,
   "license": "MIT",
@@ -23,7 +23,8 @@
     "onCommand:pohw.stop",
     "onCommand:pohw.report",
     "onCommand:pohw.enableBadge",
-    "onCommand:pohw.publishReceipt"
+    "onCommand:pohw.publishReceipt",
+    "onCommand:pohw.syncEvidence"
   ],
   "contributes": {
     "commands": [
@@ -45,7 +46,11 @@
       },
       {
         "command": "pohw.publishReceipt",
-        "title": "PoHW: Publish Signed Receipt"
+        "title": "PoHW: Sync Commit Evidence (Legacy Alias)"
+      },
+      {
+        "command": "pohw.syncEvidence",
+        "title": "PoHW: Sync Commit Evidence"
       }
     ],
     "configuration": {
@@ -72,13 +77,18 @@
           "type": "string",
           "default": "**/{.git,node_modules,dist,out,build,coverage,.venv,venv,.pohw}/**",
           "description": "VS Code glob of excluded files."
+        },
+        "pohw.evidenceAutoPush": {
+          "type": "boolean",
+          "default": true,
+          "description": "Automatically push the independent evidence Git ref to the origin remote when a source commit is detected."
         }
       }
     }
   },
   "scripts": {
     "build": "tsc -p .",
-    "test": "npm run build && node --test out/core.test.js out/proof.test.js test/integration.test.cjs test/badge-flow.test.cjs",
+    "test": "npm run build && node --test out/core.test.js out/proof.test.js test/integration.test.cjs test/badge-flow.test.cjs test/evidence-git.test.cjs",
     "package": "npm run build && vsce package --no-dependencies"
   },
   "devDependencies": {

@@ -3,7 +3,8 @@ import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { sha256, EditingEngine, Edit, Origin, StoredFile, textOf } from './core';
-import { badgeMarkdown, codeManifest, createLocalKeys, issueReceipt, keyFingerprint, ReceiptBody, updateBadgeReadme, verifySignedReceipt } from './proof';
+import { badgeMarkdown, codeManifestForCommit, gitCommitFile, createLocalKeys, issueReceipt, keyFingerprint, ReceiptBody, updateBadgeReadme, verifySignedReceipt } from './proof';
+import { gitHead, writeEvidenceCommit, pushEvidence } from './evidence-git';
 
 interface AuditEvent { seq: number; time: string; path: string; kind: string; before: string; after: string; added: number; removed: number; score: number | null; hash: string }
 interface DiskState {
@@ -19,6 +20,7 @@ interface DiskState {
 }
 
 const fmt = (v: number | null) => v === null ? 'N/A' : `${(v * 100).toFixed(1)}%`;
+const escapeHtml = (value: string): string => value.replace(/[&<>"']/g, ch => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[ch]!));
 const CONFIG_SECTION = 'pohw';
 const extensionFiles = new Set(['.go', '.ts', '.tsx', '.js', '.jsx', '.py', '.rs', '.java', '.c', '.h', '.cpp', '.hpp', '.cs', '.rb', '.php', '.swift', '.kt', '.kts', '.sh', '.sql', '.vue', '.svelte', '.html', '.css', '.json', '.yaml', '.yml', '.toml', '.md', '.xml', '.proto']);
 
@@ -35,6 +37,11 @@ class Monitor implements vscode.Disposable {
   private timer?: ReturnType<typeof setTimeout>;
   private watchers: vscode.Disposable[] = [];
   private bar: vscode.StatusBarItem;
+  private reportPanel?: vscode.WebviewPanel;
+  private evidenceTimer?: ReturnType<typeof setInterval>;
+  private lastObservedHead: string | null = null;
+  private lastSyncedHead: string | null = null;
+  private syncing = false;
 
   constructor(private readonly context: vscode.ExtensionContext) {
     this.bar = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 100);
@@ -236,6 +243,35 @@ class Monitor implements vscode.Disposable {
         this.audit(path, 'save', f.hash, f.hash, 0, 0, null);
       })
     );
+    // Poll HEAD rather than watching .git/HEAD: regular branch commits update refs/heads/*, not HEAD.
+    this.lastObservedHead = await this.getGitHead();
+    this.evidenceTimer = setInterval(() => { void this.pollCommitEvidence(); }, 5000);
+  }
+  private async pollCommitEvidence(): Promise<void> {
+    if (!this.root || this.syncing) return;
+    try { await fs.access(this.repoPath('.pohw/public-key.pem')); }
+    catch { return; }
+    const head = await this.getGitHead();
+    if (!head || head === this.lastSyncedHead) return;
+    if (head === this.lastObservedHead) return;
+    const previous = this.lastObservedHead;
+    this.lastObservedHead = head;
+    // Switch/checkout may change HEAD without new authored work; avoid emitting evidence.
+    let action = '';
+    try { action = execFileSync('git', ['reflog', '-1', '--format=%gs'], { cwd: this.root.uri.fsPath, encoding: 'utf8' }).trim(); }
+    catch { /* no reflog; user can manually sync */ }
+    if (!/^(commit( \([^)]*\))?|merge|rebase \([^)]*\)|cherry-pick):/.test(action)) return;
+    let commits = [head];
+    if (previous && /^[a-f0-9]{40}$/.test(previous)) {
+      try {
+        const list = execFileSync('git', ['rev-list', '--reverse', `${previous}..${head}`], {
+          cwd: this.root.uri.fsPath, encoding: 'utf8', timeout: 5000
+        }).trim().split('\n').filter(Boolean);
+        if (list.length > 0 && list.length <= 100) commits = list;
+      } catch { /* changed branches or history: use latest commit */ }
+    }
+    for (const commit of commits) await this.syncEvidence(false, commit);
+
   }
   async start(): Promise<void> {
     if (this.active) { void vscode.window.showInformationMessage('PoHW monitoring is already active.'); return; }
@@ -257,22 +293,15 @@ class Monitor implements vscode.Disposable {
     await this.write(); this.updateBar();
     void vscode.window.showInformationMessage('PoHW monitoring stopped; provenance is saved locally.');
     await this.report();
-    try {
-      // Badge-enabled projects publish the signed receipt on normal Stop.
-      await fs.access(this.repoPath('.pohw/public-key.pem'));
-      await this.publish();
-    } catch (err) {
-      if ((err as NodeJS.ErrnoException).code !== 'ENOENT') {
-        void vscode.window.showErrorMessage(`PoHW automatic receipt publication failed: ${(err as Error).message}`);
-      }
-    }
+    // Receipt is bound to a Git commit, not a dirty working tree. A later user commit triggers sync.
   }
+
   private repositoryIdentity(): { owner: string; repo: string; branch: string } {
     if (!this.root) throw new Error('Open one workspace folder first.');
     const cwd = this.root.uri.fsPath;
     const actualRoot = execFileSync('git', ['rev-parse', '--show-toplevel'], { cwd, encoding: 'utf8', timeout: 5000 }).trim();
     if (path.resolve(actualRoot) !== path.resolve(cwd)) throw new Error('Open the Git repository root, not a subfolder.');
-    const remote = execFileSync('git', ['remote', 'get-url', 'origin'], { cwd, encoding: 'utf8', timeout: 5000 }).trim();
+    const remote = execFileSync('git', ['config', '--get', 'remote.origin.url'], { cwd, encoding: 'utf8', timeout: 5000 }).trim();
     const match = /^(?:https:\/\/github\.com\/|git@github\.com:|ssh:\/\/git@github\.com\/)([\w.-]+)\/([\w.-]+?)(?:\.git)?\/?$/.exec(remote);
     if (!match) throw new Error('PoHW Badge currently supports GitHub origin URLs only.');
     let branch = 'main';
@@ -305,6 +334,22 @@ class Monitor implements vscode.Disposable {
       throw new Error('This repository is registered to a different key. Use the original VS Code profile, or explicitly rotate the repository key with a documented trust reset.');
     }
   }
+  private async writeGeneratedFile(file: string, content: Buffer | string): Promise<void> {
+    const desired = Buffer.isBuffer(content) ? content : Buffer.from(content);
+    try {
+      const existing = await fs.readFile(file);
+      if (existing.equals(desired)) return;
+      const answer = await vscode.window.showWarningMessage(
+        `PoHW generated file ${path.relative(this.root!.uri.fsPath, file)} differs. Update it to enable the new commit-evidence protocol?`,
+        { modal: true }, 'Update PoHW File'
+      );
+      if (answer !== 'Update PoHW File') throw new Error(`Update cancelled for ${file}`);
+      await fs.writeFile(file, desired);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+      await fs.writeFile(file, desired, { flag: 'wx' });
+    }
+  }
   async enableBadge(): Promise<void> {
     try {
       const project = this.repositoryIdentity();
@@ -323,54 +368,50 @@ class Monitor implements vscode.Disposable {
       const { createHash } = await import('node:crypto');
       const hash = (data: Buffer) => createHash('sha256').update(data).digest('hex');
       for (const [name, contents] of [['proof.js', proof], ['verify.cjs', cli]] as const) {
-        const outputFile = this.repoPath('.pohw/' + name);
-        try {
-          const existing = await fs.readFile(outputFile);
-          if (!existing.equals(contents)) throw new Error(`PoHW ${name} differs from the installed verifier. Refusing silent overwrite.`);
-        } catch (err) {
-          if ((err as NodeJS.ErrnoException).code !== 'ENOENT') throw err;
-          await fs.writeFile(outputFile, contents, { flag: 'wx' });
-        }
+        await this.writeGeneratedFile(this.repoPath('.pohw/' + name), contents);
       }
       const destination = this.repoPath('.github/workflows/pohw-verify.yml');
       await fs.mkdir(path.dirname(destination), { recursive: true });
       const template = (await fs.readFile(path.join(this.context.extensionPath, 'templates/pohw-verify.yml'), 'utf8'))
-        .replace('@@HASH_PROOF@@', hash(proof)).replace('@@HASH_CLI@@', hash(cli));
-      try {
-        const existing = await fs.readFile(destination, 'utf8');
-        if (existing !== template) throw new Error('An existing PoHW workflow differs from the bundled template. Review it manually before updating.');
-      } catch (err) {
-        if ((err as NodeJS.ErrnoException).code !== 'ENOENT') throw err;
-        await fs.writeFile(destination, template, { flag: 'wx' });
-      }
+        .replace('@@HASH_PROOF@@', hash(proof)).replace('@@HASH_CLI@@', hash(cli))
+        .replace('@@DEFAULT_BRANCH@@', JSON.stringify(branch));
+      await this.writeGeneratedFile(destination, template);
       let readme = '';
       try { readme = await fs.readFile(this.repoPath('README.md'), 'utf8'); }
       catch (err) { if ((err as NodeJS.ErrnoException).code !== 'ENOENT') throw err; }
       await fs.writeFile(this.repoPath('README.md'), updateBadgeReadme(readme, badgeMarkdown(project.owner, project.repo, branch)));
       await this.refreshBaseline();
-      void vscode.window.showInformationMessage('PoHW Badge initialized. Stop Monitoring or run Publish Signed Receipt, then commit .pohw/ and README.md, and push.');
+      this.lastObservedHead = await this.getGitHead();
+      void vscode.window.showInformationMessage('PoHW Badge enabled. Commit the one-time setup files normally; future commits generate separate signed evidence automatically.');
     } catch (err) { void vscode.window.showErrorMessage(`PoHW Badge initialization failed: ${(err as Error).message}`); }
   }
-  async publish(): Promise<void> {
+  /** Sync an existing Git commit without modifying user HEAD, index, or worktree. */
+  async syncEvidence(interactive = true, commitSha?: string): Promise<void> {
+    if (!this.root || this.syncing) return;
+    this.syncing = true;
     try {
       this.repositoryIdentity();
-      if (this.active) throw new Error('Stop Monitoring before publishing a signed receipt.');
-      if (vscode.workspace.textDocuments.some(d => d.isDirty && this.path(d.uri))) throw new Error('Save all source files before publishing.');
+      const targetCommit = commitSha ?? gitHead(this.root.uri.fsPath);
       const { privateKeyPem, publicKeyPem } = await this.localKeyPair();
       await this.registeredKey(publicKeyPem);
-      await this.refreshBaseline();
-      const manifest = codeManifest(this.root!.uri.fsPath);
+      const manifest = codeManifestForCommit(this.root.uri.fsPath, targetCommit);
       const known = new Map(this.engine.report().files.map(f => [f.path, f]));
       let units = 0, monitoredUnits = 0, weightedScore = 0;
       for (const f of manifest.files) {
-        const local = known.get(f.path);
-        if (!local) throw new Error(`PoHW cannot track code file: ${f.path}. Check monitoring limits.`);
-        units += local.units;
-        monitoredUnits += local.verifiedUnits;
-        weightedScore += (local.score ?? 0) * local.verifiedUnits;
+        const content = gitCommitFile(this.root.uri.fsPath, targetCommit, f.path);
+        if (content === null) throw new Error(`Unsupported Git content: ${f.path}`);
+        const size = [...content].reduce((n, ch) => n + (/\s/.test(ch) ? 0 : ch.length), 0);
+        units += size;
+        // A partial staging / unstaged modification cannot safely inherit the full buffer's score.
+        const tracked = this.engine.files.get(f.path);
+        const summary = known.get(f.path);
+        if (tracked && summary && textOf(tracked) === content && summary.units === size) {
+          monitoredUnits += summary.verifiedUnits;
+          weightedScore += (summary.score ?? 0) * summary.verifiedUnits;
+        }
       }
       const body: ReceiptBody = {
-        schema: 'pohw-editing-receipt/v1', claim: 'self-attested-editor-behavior',
+        schema: 'pohw-editing-receipt/v2', claim: 'self-attested-editor-behavior', targetCommit,
         issuedAt: new Date().toISOString(), keyId: keyFingerprint(publicKeyPem),
         code: { rootHash: manifest.rootHash, files: manifest.files.length, algorithm: manifest.algorithm },
         metrics: { scorePercent: monitoredUnits ? Math.round(weightedScore / monitoredUnits * 10000) / 100 : null,
@@ -380,39 +421,96 @@ class Monitor implements vscode.Disposable {
       };
       const receipt = issueReceipt(body, privateKeyPem);
       verifySignedReceipt(receipt, publicKeyPem, manifest);
-      await fs.writeFile(this.repoPath('.pohw/receipt.json'), JSON.stringify(receipt, null, 2) + '\n');
-      void vscode.window.showInformationMessage(`PoHW signed receipt published locally: ${body.metrics.scorePercent ?? 'N/A'}% editing score, ${body.metrics.coveragePercent}% coverage. Commit and push to trigger CI.`);
-    } catch (err) { void vscode.window.showErrorMessage(`PoHW receipt publication failed: ${(err as Error).message}`); }
+      const result = writeEvidenceCommit(this.root.uri.fsPath, receipt, publicKeyPem);
+      // Keep proof locally even if push is not currently possible. The next sync retries.
+      if (vscode.workspace.getConfiguration(CONFIG_SECTION).get<boolean>('evidenceAutoPush', true)) {
+        pushEvidence(this.root.uri.fsPath);
+      } else if (interactive) {
+        void vscode.window.showInformationMessage('PoHW evidence committed locally. Auto push is disabled; sync the evidence ref when ready.');
+      }
+      this.lastSyncedHead = targetCommit;
+      if (interactive) void vscode.window.showInformationMessage(`PoHW evidence ${result.updated ? 'created' : 'already exists'} for ${targetCommit.slice(0, 12)}. Your Git staging area was not modified.`);
+    } catch (error) {
+      // Retry is possible by command without editing the existing source commit.
+      void vscode.window.showErrorMessage(`PoHW evidence sync failed: ${(error as Error).message}`);
+    } finally { this.syncing = false; }
+  }
+  private renderReport(): string {
+    const r = this.engine.report();
+    const e = escapeHtml;
+    const rows = r.files.filter(f => f.units > 0).map(f => `<tr>
+      <td><code>${e(f.path)}</code></td>
+      <td>${e(fmt(f.score))}</td><td>${e(fmt(f.coverage))}</td>
+      <td>${f.byOrigin.incremental}</td><td>${f.byOrigin.bulk}</td>
+      <td>${f.byOrigin.external}</td><td>${f.byOrigin.baseline}</td>
+    </tr>`).join('\n');
+    const events = this.recentEvents.slice(-30).reverse().map(event => `<tr>
+      <td>${e(event.time)}</td><td><code>${e(event.path)}</code></td>
+      <td>${e(event.kind)}</td><td>+${event.added} / -${event.removed}</td>
+    </tr>`).join('\n');
+    return `<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline';">
+<title>PoHW Coding Provenance Report</title>
+<style>
+  body { font-family: var(--vscode-font-family); color: var(--vscode-foreground); background: var(--vscode-editor-background); padding: 18px 24px; line-height: 1.55; }
+  h1 { font-size: 1.5rem; margin: 0 0 8px; } h2 { margin-top: 32px; font-size: 1.1rem; }
+  .subtle { color: var(--vscode-descriptionForeground); }
+  .metrics { display: grid; grid-template-columns: repeat(auto-fit,minmax(190px,1fr)); gap: 12px; margin: 20px 0; }
+  .metric { border: 1px solid var(--vscode-panel-border); border-radius: 8px; padding: 14px; }
+  .metric strong { font-size: 1.65rem; display: block; } .metric span { font-size: .84rem; color: var(--vscode-descriptionForeground); }
+  .meta { display: grid; grid-template-columns: minmax(160px,max-content) minmax(0,1fr); gap: 6px 18px; }
+  .meta dt { color: var(--vscode-descriptionForeground); } .meta dd { margin: 0; overflow-wrap: anywhere; }
+  .table-wrap { overflow-x: auto; }
+  table { width: 100%; border-collapse: collapse; font-size: .91rem; }
+  th,td { padding: 7px 9px; border-bottom: 1px solid var(--vscode-panel-border); text-align: left; white-space: nowrap; }
+  th { color: var(--vscode-descriptionForeground); font-weight: 600; }
+  code { font-family: var(--vscode-editor-font-family); } .notice { border-left: 3px solid var(--vscode-textLink-foreground); padding-left: 14px; margin-top: 22px; }
+</style>
+</head>
+<body>
+<h1>PoHW Coding Provenance Report</h1>
+<div class="subtle">Read-only report · Status: ${this.active ? 'Recording' : 'Paused'}</div>
+<div class="metrics">
+  <div class="metric"><strong>${e(fmt(r.score))}</strong><span>Human editing evidence score (monitored code only)</span></div>
+  <div class="metric"><strong>${e(fmt(r.coverage))}</strong><span>Monitored coverage</span></div>
+  <div class="metric"><strong>${r.units - r.verifiedUnits} / ${r.units}</strong><span>Unverified code (non-whitespace characters)</span></div>
+</div>
+<dl class="meta">
+  <dt>Started</dt><dd>${e(this.startedAt ?? 'N/A')}</dd>
+  <dt>Stopped</dt><dd>${e(this.stoppedAt ?? 'N/A')}</dd>
+  <dt>Baseline Git HEAD</dt><dd><code>${e(this.baselineHead ?? 'N/A')}</code></dd>
+  <dt>Audit chain tip</dt><dd><code>${e(this.tip)}</code></dd>
+</dl>
+<p class="notice">This is a rule-based editing-pattern score, <strong>not</strong> a calibrated probability of human authorship. No statistically meaningful 95% confidence interval is available without labeled validation data. Automated editor changes and off-device AI assistance may be indistinguishable from human editing.</p>
+<h2>File provenance</h2>
+<div class="table-wrap"><table><thead><tr><th>File</th><th>Score</th><th>Coverage</th><th>Incremental</th><th>Bulk</th><th>External</th><th>Baseline</th></tr></thead><tbody>${rows}</tbody></table></div>
+<h2>Recent events (last 30)</h2>
+<div class="table-wrap"><table><thead><tr><th>Time</th><th>File</th><th>Event</th><th>Characters</th></tr></thead><tbody>${events}</tbody></table></div>
+</body></html>`;
   }
   async report(): Promise<void> {
     if (!this.root) { void vscode.window.showWarningMessage('Open one workspace folder to use PoHW.'); return; }
-    const r = this.engine.report();
-    const lines = [
-      '# PoHW Coding Provenance Report', '',
-      `**Status:** ${this.active ? 'Recording' : 'Paused'}`,
-      `**Human editing evidence score:** ${fmt(r.score)} (monitored coverage only)`,
-      `**Monitored coverage:** ${fmt(r.coverage)}`,
-      `**Unverified code:** ${r.units - r.verifiedUnits} / ${r.units} non-whitespace characters`,
-      `**Started:** ${this.startedAt ?? 'N/A'}`,
-      `**Stopped:** ${this.stoppedAt ?? 'N/A'}`,
-      `**Baseline Git HEAD:** ${this.baselineHead ?? 'N/A'}`,
-      `**Audit chain tip:** \`${this.tip}\``,
-      '',
-      '> This is a rule-based editing-pattern score, **not** a calibrated probability of human authorship. No 95% confidence interval is available without labeled validation data.',
-      '> Editor/API changes, keystroke emulation, and off-device AI assistance cannot reliably be distinguished in v0.',
-      '', '| File | Score | Coverage | Incremental | Bulk | External | Baseline |',
-      '| --- | ---: | ---: | ---: | ---: | ---: | ---: |',
-      ...r.files.filter(f => f.units > 0).map(f =>
-        `| \`${f.path.replace(/\|/g, '\\|')}\` | ${fmt(f.score)} | ${fmt(f.coverage)} | ${f.byOrigin.incremental} | ${f.byOrigin.bulk} | ${f.byOrigin.external} | ${f.byOrigin.baseline} |`),
-      '', '## Recent events (last 30)', '',
-      ...this.recentEvents.slice(-30).reverse().map(e => `- ${e.time} \`${e.path}\` ${e.kind} (+${e.added}/-${e.removed})`), ''
-    ];
-    const doc = await vscode.workspace.openTextDocument({ language: 'markdown', content: lines.join('\n') });
-    await vscode.window.showTextDocument(doc, { preview: true });
+    if (!this.reportPanel) {
+      const panel = vscode.window.createWebviewPanel(
+        'pohwProvenanceReport', 'PoHW Coding Provenance Report',
+        vscode.ViewColumn.Active, { enableScripts: false, retainContextWhenHidden: false }
+      );
+      this.reportPanel = panel;
+      // The disposed panel releases its own listener; do not accumulate listeners across report openings.
+      panel.onDidDispose(() => { if (this.reportPanel === panel) this.reportPanel = undefined; });
+    }
+    this.reportPanel.webview.html = this.renderReport();
+    this.reportPanel.reveal();
   }
+
   dispose(): void {
     if (this.timer) clearTimeout(this.timer);
+    if (this.evidenceTimer) clearInterval(this.evidenceTimer);
     if (this.active) { this.active = false; this.stoppedAt = new Date().toISOString(); void this.write(); }
+    this.reportPanel?.dispose();
     for (const d of this.watchers) d.dispose();
     this.bar.dispose();
   }
@@ -425,7 +523,8 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     vscode.commands.registerCommand('pohw.stop', () => monitor.stop()),
     vscode.commands.registerCommand('pohw.report', () => monitor.report()),
     vscode.commands.registerCommand('pohw.enableBadge', () => monitor.enableBadge()),
-    vscode.commands.registerCommand('pohw.publishReceipt', () => monitor.publish()));
+    vscode.commands.registerCommand('pohw.publishReceipt', () => monitor.syncEvidence()),
+    vscode.commands.registerCommand('pohw.syncEvidence', () => monitor.syncEvidence()));
   await monitor.prepare();
 }
 export function deactivate(): void { /* disposed by VS Code */ }

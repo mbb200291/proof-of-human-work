@@ -1,4 +1,4 @@
-# PoHW Coding Monitor (v0.2 — Signed Receipts & GitHub Badges)
+# PoHW Coding Monitor (v0.3 — Independent Git Evidence Branch)
 
 Local VS Code extension that records document changes and saves while a monitoring session is active. It calculates a **rule-based editing-behavior evidence score** and tracks which current code spans have monitor evidence.
 
@@ -9,39 +9,59 @@ Local VS Code extension that records document changes and saves while a monitori
 - In the VS Code terminal run `npm install`, then `npm test`.
 - Press **F5**, select **Run PoHW Extension** if asked. This opens a second **Extension Development Host** window.
 - In that new window, **File → Open Folder** to open a test code project (exactly one workspace folder).
-- Command Palette: `PoHW: Start Monitoring`. Edit and save code. Select `PoHW: Show Provenance Report` or click the PoHW status bar item. Finish with `PoHW: Stop Monitoring`.
+- Command Palette: `PoHW: Start Monitoring`. Edit and save code. Select `PoHW: Show Provenance Report` or click the PoHW status bar item to open a **read-only Webview** (no `Untitled` file or unsaved dot; repeated opens reuse the panel). Finish with `PoHW: Stop Monitoring`.
 - To build an installable `.vsix` package: `npm run package`, then VS Code → **Extensions: Install from VSIX...**.
 
-## GitHub Badge + signed Receipt (Scheme B)
+## GitHub Badge + signed Commit Evidence (v0.3)
 
-The badge feature is **opt-in per Git repository**. The VS Code extension must be opened at the **Git repository root** with a GitHub `origin` remote. It uses a self-attested Ed25519 key stored privately in VS Code extension **globalStorage**, scoped to the local repository. **No private key is committed.**
+The badge is opt-in per GitHub repository. Open the **repository root** in VS Code. Each signed receipt is bound to the **SHA of an already-created source commit**; the evidence record is committed in `pohw-evidence`, independently of the user's working tree and staging area. The Ed25519 private key stays in VS Code extension `globalStorage`. No private key or raw source is uploaded in the receipt.
 
-1. Open Command Palette → **`PoHW: Enable GitHub Badge`**; confirm the **default branch** (normally `main`). This operation is idempotent and adds:
-   - `.pohw/public-key.pem` — the pinned self-attested signing identity;
-   - `.pohw/proof.js` + `.pohw/verify.cjs` — standalone, dependency-free receipt verifier;
-   - `.github/workflows/pohw-verify.yml` — validates the verifier hashes, signature, and current code snapshot;
-   - an automatically generated Badge block in `README.md`.
-2. Start monitoring, edit and save code, then **`PoHW: Stop Monitoring`**. If Badge is enabled, Stop **automatically signs** `.pohw/receipt.json`. You may rerun **`PoHW: Publish Signed Receipt`** after making further source changes. The extension must be stopped and all buffers saved before signing.
-3. Run `git add -A` to stage your changed code, README, workflow and `.pohw/` files; `git commit` and `git push` to the default branch. **Never commit the local private key.**
-4. On push, GitHub Actions checks the pinned local verifier, Ed25519 signature and source files. If validation succeeds on the **default branch**, the workflow publishes `summary.json` to a dedicated `pohw-badges` branch. The README's dynamic score/coverage badges read **only this CI-published branch**, not the locally generated receipt. A third badge shows the workflow status.
-5. On subsequent code edits, Stop and commit the **new** receipt together with source changes; otherwise CI will reject the commit. If no valid receipt is present, the verify job fails and does **not** publish a new score. Previously published numeric badges may remain **stale** (use the workflow status badge and source commit in the JSON for freshness).
+### One-time setup / upgrade from v0.2
 
-For manual verification without GitHub Actions:
+1. Install v0.3 and run **`PoHW: Enable GitHub Badge`**; select your *actual GitHub default branch* (`main`, `dev`, etc.). This generates or updates:
+   - `.pohw/public-key.pem` (existing signer retained), `.pohw/proof.js`, `.pohw/verify.cjs`;
+   - `.github/workflows/pohw-verify.yml` (new cross-branch verifier);
+   - Badge block inside `README.md`.
+2. When upgrading from v0.2, approve replacement of the **generated** verifier/workflow files when prompted. Check changes before committing. An old tracked `.pohw/receipt.json` is not used in v0.3; you may remove this **legacy** file with a normal commit.
+3. **Only for this initial setup or upgrade**, commit and push those generated setup files to your repository's default branch in your normal Git workflow. This is necessary for GitHub Actions to run. PoHW never commits your source or initial setup automatically.
+4. Permit Actions to write to `pohw-badges` (`Settings → Actions → General → Workflow permissions → Read and write permissions`). Ordinary Git authentication must permit the local process to push `pohw-evidence` to `origin`.
 
-```bash
-node .pohw/verify.cjs . verified-summary.json
+### Everyday use — no extra `git commit` for receipts
+
+1. Start monitoring, edit and save as normal, stop monitoring whenever you like. `PoHW: Show Provenance Report` is a read-only Webview.
+2. **Commit your code exactly as you normally do** (`git commit` or VS Code Source Control). About every 5 seconds while VS Code is open, PoHW checks for new local commits. It signs each newly detected commit, writes an independent evidence commit to local `refs/pohw/evidence`, and automatically pushes that ref to remote **`pohw-evidence`**. It does not stage, commit, checkout, or push your source branch.
+3. **Push your ordinary source branch normally.** On source push, GitHub Actions waits up to approximately 90 seconds for the matching `pohw-evidence/receipts/<source-sha>.json`, verifies signature and source contents from the exact source commit, then (on the default branch) publishes verified `summary.json` to `pohw-badges`.
+4. Badges in the README read only the CI-published `pohw-badges` JSON and verification workflow status. Failed or missing receipt checks do not refresh numeric badges; the previous values may be stale.
+
+If a commit was created while VS Code was closed, or merged on GitHub's website, open that Git commit in the local repo and execute **`PoHW: Sync Commit Evidence`**. This also retries failed evidence pushes. It does **not** create a normal source commit; use this command only when necessary. The legacy command `PoHW: Publish Signed Receipt` is an alias.
+
+To disable automatic network pushes, set `pohw.evidenceAutoPush: false`. In that case evidence is generated locally only; manually push the independent ref with:
+
+```sh
+git push origin refs/pohw/evidence:refs/heads/pohw-evidence
 ```
 
-This requires Node.js 20+ and Git, but no npm dependencies. `verified-summary.json` is an output of **successful** verification only; do not commit it as an input to the verifier.
+### Independent verification
 
-### Project requirements and operational limitations
+```sh
+git fetch origin pohw-evidence
+sha=$(git rev-parse HEAD)
+git show "FETCH_HEAD:receipts/$sha.json" > /tmp/pohw-receipt.json
+node .pohw/verify.cjs . /tmp/pohw-receipt.json /tmp/pohw-summary.json
+```
 
-- The GitHub repository must permit GitHub Actions to write to the `pohw-badges` branch. `contents: write` is requested by the `publish` job; repository settings or branch protections can still block it. The first successful default-branch run creates the badge branch.
-- The source snapshot covers Git-indexed + untracked, non-ignored **code/text files** with supported extensions; excluded directories include `.git`, `.pohw`, `node_modules`, `build`, `dist`, etc. The receipt includes a sorted, canonical file-list digest and the CI re-derives it from the checked-out commit. This is a **content digest**, not a signed Git commit SHA: the receipt lives inside the commit and cannot sign that same commit hash without an external record.
-- Stage and commit all source files before pushing. An unstaged deletion can prevent publication; an uncommitted source change after signing makes CI fail. When formatting or Git operations modify code, publish a new receipt.
-- Score and coverage are heuristic and **self-attested**. A valid signature proves the pinned local key signed the report, while CI proves the checked-out eligible source files match the report. It does **not** prove the edits were human-generated, nor that the signer did not create a fake edit log. The repo owner can also rotate the trust root and/or edit the workflow; protect the default branch and workflow updates for any stronger organizational policy.
-- Loss of the local signing key prevents updating the receipt under the existing pinned public key. Key rotation is an explicit trust reset, not an automatic regeneration. The key is stored in VS Code globalStorage; backing it up securely is the user's responsibility.
-- The publicly readable Badge JSON contains percentage scores, source content hash, signed issue time and CI commit SHA, but no raw source code or local event history.
+The checked-out HEAD must match the receipt's target commit. The verifier independently reads the Git **commit tree**, never uncommitted working-tree contents.
+
+### Git safety & limitations
+
+- PoHW creates evidence commits with a **temporary `GIT_INDEX_FILE`**, `git write-tree`, and `git commit-tree`. It never changes the user's HEAD, staged index, unstaged files, or Git hooks/settings. Staged, unstaged, partially staged and untracked files can coexist. Branch checkout and merge/rebase states don't trigger source commits themselves.
+- Provenance scoring remains conservative: only a committed file **exactly matching its tracked editor buffer** inherits its measured score. If the developer partially staged changes, the mismatched file is counted as **Unverified** for that commit, not incorrectly scored. The receipt still verifies the actual committed code.
+- Source commits that were already pushed before evidence synchronization may briefly fail CI; the workflow retries fetching evidence for about 90 seconds. A delayed local sync may require rerunning the failed Action.
+- If GitHub Actions merges a PR on the server, the generated merge commit was not seen by the local plugin; use `PoHW: Sync Commit Evidence` on the fetched merge commit before rerunning Actions.
+- Automatic pushing of the evidence branch requires normal `origin` Git credentials and no branch-protection restrictions. On failure, the local evidence ref remains for retry; check PoHW messages. Multi-machine conflicts are handled without force pushing; divergence requires manual recovery.
+- Evidence records are self-attested. Signature validity and commit matching **do not prove human cognitive authorship**. Scores are uncalibrated heuristics and have no statistically valid 95% CI.
+- Back up the local signing key securely. Losing the key requires an explicit public-key rotation/reset. This is a research prototype, not hardened endpoint attestation.
+- Only supported code/text files (subject to the existing file policy and per-file size limit) participate in the source digest. Unsupported files are excluded, not silently certified.
 
 ## Measurement behavior
 

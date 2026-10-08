@@ -4,7 +4,7 @@ import { execFileSync } from 'node:child_process';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 
-export const RECEIPT_VERSION = 'pohw-editing-receipt/v1';
+export const RECEIPT_VERSION = 'pohw-editing-receipt/v2';
 const EXCLUDED = new Set(['.git', '.pohw', 'node_modules', 'dist', 'out', 'build', 'coverage', '.venv', 'venv']);
 const EXTENSIONS = new Set(['.go', '.ts', '.tsx', '.js', '.jsx', '.py', '.rs', '.java', '.c', '.h', '.cpp', '.hpp', '.cs', '.rb', '.php', '.swift', '.kt', '.kts', '.sh', '.sql', '.vue', '.svelte', '.html', '.css', '.json', '.yaml', '.yml', '.toml', '.md', '.xml', '.proto']);
 const sha256 = (data: Buffer | string): string => createHash('sha256').update(data).digest('hex');
@@ -44,6 +44,39 @@ export function codeManifest(root: string): CodeManifest {
   return { algorithm: 'pohw-code-files-sha256-v1', rootHash: sha256(canonicalJson(files)), files };
 }
 
+
+/** Read exactly the source files stored in a Git commit, never the working tree or index. */
+export function codeManifestForCommit(root: string, commit: string): CodeManifest {
+  if (!/^[a-f0-9]{40}$/.test(commit)) throw new Error('Invalid Git commit SHA');
+  const objectType = execFileSync('git', ['cat-file', '-t', commit], { cwd: root, encoding: 'utf8' }).trim();
+  if (objectType !== 'commit') throw new Error('PoHW target must be a Git commit');
+  const output = execFileSync('git', ['ls-tree', '-r', '-z', '--full-tree', commit], { cwd: root, maxBuffer: 16 * 1024 * 1024 });
+  const files: CodeManifest['files'] = [];
+  for (const entry of output.toString('utf8').split('\0').filter(Boolean)) {
+    const tab = entry.indexOf('\t');
+    if (tab < 0) throw new Error('Malformed Git tree');
+    const [mode, type, object] = entry.slice(0, tab).split(' ');
+    const file = entry.slice(tab + 1);
+    if (!eligible(file)) continue;
+    if (!['100644', '100755'].includes(mode) || type !== 'blob') throw new Error(`Unsupported Git source type: ${file}`);
+    const contents = execFileSync('git', ['cat-file', 'blob', object], { cwd: root, maxBuffer: 2 * 1024 * 1024 + 1024 });
+    if (contents.length > 2 * 1024 * 1024) throw new Error(`PoHW source file too large: ${file}`);
+    files.push({ path: file, sha256: sha256(contents) });
+  }
+  if (files.length > 20000) throw new Error('PoHW file limit exceeded (20000)');
+  files.sort((a, b) => a.path < b.path ? -1 : a.path > b.path ? 1 : 0);
+  return { algorithm: 'pohw-code-files-sha256-v1', rootHash: sha256(canonicalJson(files)), files };
+}
+
+/** Return UTF-8 commit content for safe, exact provenance comparison. */
+export function gitCommitFile(root: string, commit: string, filename: string): string | null {
+  try {
+    const contents = execFileSync('git', ['show', `${commit}:${filename}`], { cwd: root, maxBuffer: 2 * 1024 * 1024 + 1024 });
+    if (contents.includes(0) || !contents.equals(Buffer.from(contents.toString('utf8'), 'utf8'))) return null;
+    return contents.toString('utf8');
+  } catch { return null; }
+}
+
 export function keyFingerprint(publicKeyPem: string): string {
   const der = createPublicKey(publicKeyPem).export({ type: 'spki', format: 'der' });
   return sha256(der);
@@ -61,6 +94,7 @@ export interface ReceiptBody {
   schema: typeof RECEIPT_VERSION;
   claim: 'self-attested-editor-behavior';
   issuedAt: string;
+  targetCommit: string;
   keyId: string;
   code: { rootHash: string; files: number; algorithm: CodeManifest['algorithm'] };
   metrics: { scorePercent: number | null; coveragePercent: number; units: number; monitoredUnits: number; algorithm: 'rule-based-v0.1' };
@@ -78,6 +112,7 @@ export function verifySignedReceipt(receipt: SignedReceipt, publicKeyPem: string
   if (!receipt || !receipt.body || typeof receipt.signature !== 'string') throw new Error('Malformed PoHW receipt');
   const body = receipt.body;
   if (body.schema !== RECEIPT_VERSION || body.claim !== 'self-attested-editor-behavior') throw new Error('Unsupported PoHW receipt claim/schema');
+  if (!/^[a-f0-9]{40}$/.test(body.targetCommit)) throw new Error('Invalid target commit in receipt');
   if (body.keyId !== keyFingerprint(publicKeyPem)) throw new Error('Receipt signer differs from registered public key');
   if (body.code.algorithm !== manifest.algorithm || body.code.rootHash !== manifest.rootHash || body.code.files !== manifest.files.length) {
     throw new Error('Code content does not match signed receipt (rerun PoHW Publish Signed Receipt)');

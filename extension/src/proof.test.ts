@@ -23,7 +23,7 @@ function sample(root: string) {
   const keys = createLocalKeys();
   const manifest = codeManifest(root);
   const body: ReceiptBody = {
-    schema: 'pohw-editing-receipt/v1', claim: 'self-attested-editor-behavior', issuedAt: '2026-10-08T12:30:00.000Z',
+    schema: 'pohw-editing-receipt/v2', targetCommit: 'a'.repeat(40), claim: 'self-attested-editor-behavior', issuedAt: '2026-10-08T12:30:00.000Z',
     keyId: keyFingerprint(keys.publicKeyPem),
     code: { rootHash: manifest.rootHash, files: manifest.files.length, algorithm: manifest.algorithm },
     metrics: { scorePercent: 82.75, coveragePercent: 50, units: 100, monitoredUnits: 50, algorithm: 'rule-based-v0.1' },
