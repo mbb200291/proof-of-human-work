@@ -4,3 +4,4 @@ src/**
 **/*.map
 *.vsix
 node_modules/**
+test/**
