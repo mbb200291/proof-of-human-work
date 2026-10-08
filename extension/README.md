@@ -1,4 +1,4 @@
-# PoHW Coding Monitor (v0.3 — Independent Git Evidence Branch)
+# PoHW Coding Monitor (v0.3.1 — Independent Git Evidence Branch)
 
 Local VS Code extension that records document changes and saves while a monitoring session is active. It calculates a **rule-based editing-behavior evidence score** and tracks which current code spans have monitor evidence.
 
@@ -96,4 +96,4 @@ The checked-out HEAD must match the receipt's target commit. The verifier indepe
 - Monitoring resumes **only by explicit Start** after VS Code restarts. Changes since the last session are reconciled as unverified.
 - If capturing confidential code is not acceptable, do not run this prototype. Delete the extension's globalStorage directory to erase stored local data.
 
-The end-to-end design background lives in [`docs/applications/verifiable-human-coding-session.md`](https://github.com/mbb200291/proof-of-human-work/blob/feature/vscode-human-editing-mvp/docs/applications/verifiable-human-coding-session.md).
+The end-to-end design background lives in [`docs/applications/verifiable-human-coding-session.md`](https://github.com/mbb200291/proof-of-human-work/blob/main/docs/applications/verifiable-human-coding-session.md).
