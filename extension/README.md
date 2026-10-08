@@ -12,6 +12,8 @@ Local VS Code extension that records document changes and saves while a monitori
 - Command Palette: `PoHW: Start Monitoring`. Edit and save code. Select `PoHW: Show Provenance Report` or click the PoHW status bar item to open a **read-only Webview** (no `Untitled` file or unsaved dot; repeated opens reuse the panel). Finish with `PoHW: Stop Monitoring`.
 - To build an installable `.vsix` package: `npm run package`, then VS Code → **Extensions: Install from VSIX...**.
 
+> **v0.3.1 note:** This release fixes first-time publication of the independent `pohw-badges` branch. If a project has already initialized badges, rerun `PoHW: Enable GitHub Badge`, accept the workflow template update, and commit/push the updated `.github/workflows/pohw-verify.yml` once. The score receipt remains on `pohw-evidence`; no new source-code commit is required for the verifier fix.
+
 ## GitHub Badge + signed Commit Evidence (v0.3)
 
 The badge is opt-in per GitHub repository. Open the **repository root** in VS Code. Each signed receipt is bound to the **SHA of an already-created source commit**; the evidence record is committed in `pohw-evidence`, independently of the user's working tree and staging area. The Ed25519 private key stays in VS Code extension `globalStorage`. No private key or raw source is uploaded in the receipt.

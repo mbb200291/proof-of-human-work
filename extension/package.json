@@ -2,7 +2,7 @@
   "name": "pohw-coding-monitor",
   "displayName": "PoHW Coding Monitor",
   "description": "Rule-based coding provenance monitor for VS Code (research prototype)",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "publisher": "pohw-research",
   "private": true,
   "license": "MIT",
@@ -89,7 +89,7 @@
   },
   "scripts": {
     "build": "tsc -p .",
-    "test": "npm run build && node --test out/core.test.js out/proof.test.js test/integration.test.cjs test/badge-flow.test.cjs test/evidence-git.test.cjs",
+    "test": "npm run build && node --test out/core.test.js out/proof.test.js test/integration.test.cjs test/badge-flow.test.cjs test/evidence-git.test.cjs test/badge-publish.test.cjs",
     "package": "npm run build && vsce package --no-dependencies"
   },
   "devDependencies": {
