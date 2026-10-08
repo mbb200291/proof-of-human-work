@@ -246,6 +246,7 @@ class Monitor implements vscode.Disposable {
     // Poll HEAD rather than watching .git/HEAD: regular branch commits update refs/heads/*, not HEAD.
     this.lastObservedHead = await this.getGitHead();
     this.evidenceTimer = setInterval(() => { void this.pollCommitEvidence(); }, 5000);
+    this.evidenceTimer.unref(); // Do not keep a Node process alive solely for polling.
   }
   private async pollCommitEvidence(): Promise<void> {
     if (!this.root || this.syncing) return;
