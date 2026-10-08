@@ -150,10 +150,11 @@ export function badgeMarkdown(owner: string, repo: string, defaultBranch: string
   const base = `https://raw.githubusercontent.com/${owner}/${repo}/pohw-badges/summary.json`;
   const dynamic = (field: string, label: string, color: string): string =>
     `https://img.shields.io/badge/dynamic/json?url=${encodeURIComponent(base)}&query=${encodeURIComponent('$.' + field)}&suffix=%25&label=${encodeURIComponent(label)}&color=${color}`;
+  const report = `https://github.com/${owner}/${repo}/blob/pohw-badges/REPORT.md`;
   return [
     '<!-- pohw-badges:start -->',
-    `[![PoHW Editing Score](${dynamic('humanScore', 'PoHW Editing Score', 'blue')})](https://github.com/${owner}/${repo}/actions/workflows/pohw-verify.yml)`,
-    `[![PoHW Monitored](${dynamic('monitoredCoverage', 'PoHW Monitored', 'informational')})](https://github.com/${owner}/${repo}/actions/workflows/pohw-verify.yml)`,
+    `[![PoHW Editing Score](${dynamic('humanScore', 'PoHW Editing Score', 'blue')})](${report})`,
+    `[![PoHW Monitored](${dynamic('monitoredCoverage', 'PoHW Monitored', 'informational')})](${report})`,
     `[![PoHW Receipt Verification](https://github.com/${owner}/${repo}/actions/workflows/pohw-verify.yml/badge.svg?branch=${encodeURIComponent(defaultBranch)})](https://github.com/${owner}/${repo}/actions/workflows/pohw-verify.yml)`,
     '<!-- pohw-badges:end -->'
   ].join('\n');
