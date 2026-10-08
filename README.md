@@ -53,6 +53,14 @@ PoHP = (U, P, E, C)
 - [Verifiable Human Coding Session：可驗證的人類程式碼編輯工作階段](docs/applications/verifiable-human-coding-session.md)  
   以 VS Code extension／受控編輯環境記錄程式碼從 workspace baseline 到最終結果的可驗證 provenance，並與 Presence、Endpoint Integrity 證據結合。此方向驗證的是「程式碼如何在受監控 session 中形成」，不宣稱能單靠 IDE 證明開發者完全沒有使用 AI。
 
+## VS Code 應用原型
+
+已提供可在本機測試的 [PoHW Coding Monitor](extension/README.md)（TypeScript / VS Code Extension API）。透過手動啟動監控，記錄編輯及存檔歷史，維護各程式碼區段的來源分數，並分開顯示 **Human Editing Evidence Score** 與 **Monitored Coverage**。
+
+快速開始：進入 `extension/` 執行 `npm install`、`npm test`，用 VS Code 開啟 `extension/` 後按 `F5` 啟動 Extension Development Host，再執行 `PoHW: Start Monitoring`。詳見 [本機安裝與測試說明](extension/README.md)。
+
+原型採 rule-based heuristic；尚未經實驗校準為人類貢獻機率，也不提供沒有統計依據的 95% 信賴區間。
+
 ## 初期非目標
 
 本專案現階段**不宣稱**能做到以下事項：
