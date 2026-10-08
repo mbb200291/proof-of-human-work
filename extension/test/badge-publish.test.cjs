@@ -40,11 +40,15 @@ test('badge publishing creates missing orphan branch and updates existing branch
       fs.writeFileSync(verifiedFile, JSON.stringify(summary) + '\n');
       execFileSync('bash', ['-e', '-c', publishScript], {
         cwd: repository,
-        env: { ...process.env, VERIFIED_FILE: verifiedFile, GITHUB_SHA: sourceSha },
+        env: { ...process.env, VERIFIED_FILE: verifiedFile, GITHUB_SHA: sourceSha, GITHUB_REPOSITORY: 'demo/repo' },
         stdio: ['ignore', 'pipe', 'pipe']
       });
       const published = JSON.parse(git(temp, '--git-dir=' + remote, 'show', 'refs/heads/pohw-badges:summary.json'));
       assert.deepEqual(published, summary);
+      const report = git(temp, '--git-dir=' + remote, 'show', 'refs/heads/pohw-badges:REPORT.md');
+      assert.match(report, /PoHW Verified Editing Report/);
+      assert.match(report, new RegExp(sourceSha));
+      assert.match(report, /self-attested/i);
       assert.equal(git(repository, 'rev-parse', 'refs/heads/dev'), sourceSha, 'source branch remains unchanged');
     };
 
