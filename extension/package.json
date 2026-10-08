@@ -24,7 +24,8 @@
     "onCommand:pohw.report",
     "onCommand:pohw.enableBadge",
     "onCommand:pohw.publishReceipt",
-    "onCommand:pohw.syncEvidence"
+    "onCommand:pohw.syncEvidence",
+    "onStartupFinished"
   ],
   "contributes": {
     "commands": [
