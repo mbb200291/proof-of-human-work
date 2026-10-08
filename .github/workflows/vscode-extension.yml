@@ -1,0 +1,25 @@
+name: VS Code Extension MVP
+
+on:
+  push:
+    paths:
+      - "extension/**"
+      - ".github/workflows/vscode-extension.yml"
+  pull_request:
+    paths:
+      - "extension/**"
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Install dependencies
+        working-directory: extension
+        run: npm install --no-audit --no-fund
+      - name: Build and test
+        working-directory: extension
+        run: npm test
