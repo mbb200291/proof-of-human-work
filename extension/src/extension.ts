@@ -1,5 +1,9 @@
 import * as vscode from 'vscode';
+import * as fs from 'node:fs/promises';
+import * as path from 'node:path';
+import { execFileSync } from 'node:child_process';
 import { sha256, EditingEngine, Edit, Origin, StoredFile, textOf } from './core';
+import { badgeMarkdown, codeManifest, createLocalKeys, issueReceipt, keyFingerprint, ReceiptBody, updateBadgeReadme, verifySignedReceipt } from './proof';
 
 interface AuditEvent { seq: number; time: string; path: string; kind: string; before: string; after: string; added: number; removed: number; score: number | null; hash: string }
 interface DiskState {
@@ -253,6 +257,132 @@ class Monitor implements vscode.Disposable {
     await this.write(); this.updateBar();
     void vscode.window.showInformationMessage('PoHW monitoring stopped; provenance is saved locally.');
     await this.report();
+    try {
+      // Badge-enabled projects publish the signed receipt on normal Stop.
+      await fs.access(this.repoPath('.pohw/public-key.pem'));
+      await this.publish();
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code !== 'ENOENT') {
+        void vscode.window.showErrorMessage(`PoHW automatic receipt publication failed: ${(err as Error).message}`);
+      }
+    }
+  }
+  private repositoryIdentity(): { owner: string; repo: string; branch: string } {
+    if (!this.root) throw new Error('Open one workspace folder first.');
+    const cwd = this.root.uri.fsPath;
+    const actualRoot = execFileSync('git', ['rev-parse', '--show-toplevel'], { cwd, encoding: 'utf8', timeout: 5000 }).trim();
+    if (path.resolve(actualRoot) !== path.resolve(cwd)) throw new Error('Open the Git repository root, not a subfolder.');
+    const remote = execFileSync('git', ['remote', 'get-url', 'origin'], { cwd, encoding: 'utf8', timeout: 5000 }).trim();
+    const match = /^(?:https:\/\/github\.com\/|git@github\.com:|ssh:\/\/git@github\.com\/)([\w.-]+)\/([\w.-]+?)(?:\.git)?\/?$/.exec(remote);
+    if (!match) throw new Error('PoHW Badge currently supports GitHub origin URLs only.');
+    let branch = 'main';
+    try {
+      const remoteHead = execFileSync('git', ['symbolic-ref', '--short', 'refs/remotes/origin/HEAD'], { cwd, encoding: 'utf8', timeout: 3000, stdio: ['ignore', 'pipe', 'ignore'] }).trim();
+      branch = remoteHead.replace(/^origin\//, '');
+    } catch { /* Ask the user in the command when remote HEAD is unavailable. */ }
+    return { owner: match[1], repo: match[2], branch };
+  }
+  private async localKeyPair(): Promise<{ privateKeyPem: string; publicKeyPem: string }> {
+    await fs.mkdir(this.context.globalStorageUri.fsPath, { recursive: true });
+    const secret = path.join(this.context.globalStorageUri.fsPath, `pohw-${sha256(this.root!.uri.toString()).slice(0, 24)}-ed25519-private.pem`);
+    let privateKeyPem: string;
+    try { privateKeyPem = await fs.readFile(secret, 'utf8'); }
+    catch (err) {
+      if ((err as NodeJS.ErrnoException).code !== 'ENOENT') throw err;
+      const pair = createLocalKeys();
+      try { await fs.writeFile(secret, pair.privateKeyPem, { mode: 0o600, flag: 'wx' }); }
+      catch (e) { if ((e as NodeJS.ErrnoException).code !== 'EEXIST') throw e; }
+      privateKeyPem = await fs.readFile(secret, 'utf8');
+    }
+    const { createPrivateKey, createPublicKey } = await import('node:crypto');
+    const publicKeyPem = createPublicKey(createPrivateKey(privateKeyPem)).export({ type: 'spki', format: 'pem' }).toString();
+    return { privateKeyPem, publicKeyPem };
+  }
+  private repoPath(name: string): string { return path.join(this.root!.uri.fsPath, name); }
+  private async registeredKey(local: string): Promise<void> {
+    const pinned = await fs.readFile(this.repoPath('.pohw/public-key.pem'), 'utf8');
+    if (keyFingerprint(pinned) !== keyFingerprint(local)) {
+      throw new Error('This repository is registered to a different key. Use the original VS Code profile, or explicitly rotate the repository key with a documented trust reset.');
+    }
+  }
+  async enableBadge(): Promise<void> {
+    try {
+      const project = this.repositoryIdentity();
+      const branch = await vscode.window.showInputBox({ prompt: 'GitHub default branch for the verification badge', value: project.branch, ignoreFocusOut: true });
+      if (!branch) return;
+      if (!/^[A-Za-z0-9._/-]+$/.test(branch) || branch.includes('..')) throw new Error('Invalid Git branch name.');
+      const keys = await this.localKeyPair();
+      await fs.mkdir(this.repoPath('.pohw'), { recursive: true });
+      try { await this.registeredKey(keys.publicKeyPem); }
+      catch (err) {
+        if ((err as NodeJS.ErrnoException).code !== 'ENOENT') throw err;
+        await fs.writeFile(this.repoPath('.pohw/public-key.pem'), keys.publicKeyPem, { flag: 'wx' });
+      }
+      const proof = await fs.readFile(path.join(this.context.extensionPath, 'out/proof.js'));
+      const cli = await fs.readFile(path.join(this.context.extensionPath, 'templates/verify-receipt.cjs'));
+      const { createHash } = await import('node:crypto');
+      const hash = (data: Buffer) => createHash('sha256').update(data).digest('hex');
+      for (const [name, contents] of [['proof.js', proof], ['verify.cjs', cli]] as const) {
+        const outputFile = this.repoPath('.pohw/' + name);
+        try {
+          const existing = await fs.readFile(outputFile);
+          if (!existing.equals(contents)) throw new Error(`PoHW ${name} differs from the installed verifier. Refusing silent overwrite.`);
+        } catch (err) {
+          if ((err as NodeJS.ErrnoException).code !== 'ENOENT') throw err;
+          await fs.writeFile(outputFile, contents, { flag: 'wx' });
+        }
+      }
+      const destination = this.repoPath('.github/workflows/pohw-verify.yml');
+      await fs.mkdir(path.dirname(destination), { recursive: true });
+      const template = (await fs.readFile(path.join(this.context.extensionPath, 'templates/pohw-verify.yml'), 'utf8'))
+        .replace('@@HASH_PROOF@@', hash(proof)).replace('@@HASH_CLI@@', hash(cli));
+      try {
+        const existing = await fs.readFile(destination, 'utf8');
+        if (existing !== template) throw new Error('An existing PoHW workflow differs from the bundled template. Review it manually before updating.');
+      } catch (err) {
+        if ((err as NodeJS.ErrnoException).code !== 'ENOENT') throw err;
+        await fs.writeFile(destination, template, { flag: 'wx' });
+      }
+      let readme = '';
+      try { readme = await fs.readFile(this.repoPath('README.md'), 'utf8'); }
+      catch (err) { if ((err as NodeJS.ErrnoException).code !== 'ENOENT') throw err; }
+      await fs.writeFile(this.repoPath('README.md'), updateBadgeReadme(readme, badgeMarkdown(project.owner, project.repo, branch)));
+      await this.refreshBaseline();
+      void vscode.window.showInformationMessage('PoHW Badge initialized. Stop Monitoring or run Publish Signed Receipt, then commit .pohw/ and README.md, and push.');
+    } catch (err) { void vscode.window.showErrorMessage(`PoHW Badge initialization failed: ${(err as Error).message}`); }
+  }
+  async publish(): Promise<void> {
+    try {
+      this.repositoryIdentity();
+      if (this.active) throw new Error('Stop Monitoring before publishing a signed receipt.');
+      if (vscode.workspace.textDocuments.some(d => d.isDirty && this.path(d.uri))) throw new Error('Save all source files before publishing.');
+      const { privateKeyPem, publicKeyPem } = await this.localKeyPair();
+      await this.registeredKey(publicKeyPem);
+      await this.refreshBaseline();
+      const manifest = codeManifest(this.root!.uri.fsPath);
+      const known = new Map(this.engine.report().files.map(f => [f.path, f]));
+      let units = 0, monitoredUnits = 0, weightedScore = 0;
+      for (const f of manifest.files) {
+        const local = known.get(f.path);
+        if (!local) throw new Error(`PoHW cannot track code file: ${f.path}. Check monitoring limits.`);
+        units += local.units;
+        monitoredUnits += local.verifiedUnits;
+        weightedScore += (local.score ?? 0) * local.verifiedUnits;
+      }
+      const body: ReceiptBody = {
+        schema: 'pohw-editing-receipt/v1', claim: 'self-attested-editor-behavior',
+        issuedAt: new Date().toISOString(), keyId: keyFingerprint(publicKeyPem),
+        code: { rootHash: manifest.rootHash, files: manifest.files.length, algorithm: manifest.algorithm },
+        metrics: { scorePercent: monitoredUnits ? Math.round(weightedScore / monitoredUnits * 10000) / 100 : null,
+          coveragePercent: units ? Math.round(monitoredUnits / units * 10000) / 100 : 0,
+          units, monitoredUnits, algorithm: 'rule-based-v0.1' },
+        session: { startedAt: this.startedAt, endedAt: this.stoppedAt, auditTip: this.tip }
+      };
+      const receipt = issueReceipt(body, privateKeyPem);
+      verifySignedReceipt(receipt, publicKeyPem, manifest);
+      await fs.writeFile(this.repoPath('.pohw/receipt.json'), JSON.stringify(receipt, null, 2) + '\n');
+      void vscode.window.showInformationMessage(`PoHW signed receipt published locally: ${body.metrics.scorePercent ?? 'N/A'}% editing score, ${body.metrics.coveragePercent}% coverage. Commit and push to trigger CI.`);
+    } catch (err) { void vscode.window.showErrorMessage(`PoHW receipt publication failed: ${(err as Error).message}`); }
   }
   async report(): Promise<void> {
     if (!this.root) { void vscode.window.showWarningMessage('Open one workspace folder to use PoHW.'); return; }
@@ -293,7 +423,9 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   context.subscriptions.push(monitor,
     vscode.commands.registerCommand('pohw.start', () => monitor.start()),
     vscode.commands.registerCommand('pohw.stop', () => monitor.stop()),
-    vscode.commands.registerCommand('pohw.report', () => monitor.report()));
+    vscode.commands.registerCommand('pohw.report', () => monitor.report()),
+    vscode.commands.registerCommand('pohw.enableBadge', () => monitor.enableBadge()),
+    vscode.commands.registerCommand('pohw.publishReceipt', () => monitor.publish()));
   await monitor.prepare();
 }
 export function deactivate(): void { /* disposed by VS Code */ }
