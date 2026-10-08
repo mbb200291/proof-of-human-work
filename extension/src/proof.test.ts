@@ -78,3 +78,9 @@ test('idempotent badges and deterministic JSON canonicalization', () => {
   assert.throws(() => updateBadgeReadme('<!-- pohw-badges:start -->', md), /Malformed/);
   assert.equal(canonicalJson({ b: 2, a: [3, { y: 2, x: 1 }] }), canonicalJson({ a: [3, { x: 1, y: 2 }], b: 2 }));
 });
+test('editing badges navigate to the published report, while verification navigates to Actions', () => {
+  const md = badgeMarkdown('alice', 'demo', 'dev');
+  assert.equal(md.split('https://github.com/alice/demo/blob/pohw-badges/REPORT.md').length - 1, 2);
+  assert.match(md, /PoHW Receipt Verification.*actions\/workflows\/pohw-verify\.yml/);
+  assert.ok(!md.includes('](https://github.com/alice/demo/actions/workflows/pohw-verify.yml)\n[![PoHW Monitored]'));
+});
