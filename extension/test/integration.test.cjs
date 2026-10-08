@@ -14,19 +14,29 @@ test('extension end-to-end: start → edit → save → report → stop and loca
   const written = new Map();
   const listeners = {};
   const commands = {};
-  const shown = [];
+  const panels = [];
   let bar = null;
   const disposable = () => ({ dispose() {} });
   const vscode = {
     Uri: { joinPath: (base, name) => uri(base.fsPath + '/' + name) },
     RelativePattern: class { constructor() {} },
     StatusBarAlignment: { Left: 1 },
+    ViewColumn: { Active: -1 },
     FileSystemError: class FileSystemError extends Error { constructor(code) { super(code); this.code = code; } },
     commands: { registerCommand(name, callback) { commands[name] = callback; return disposable(); } },
     window: {
       createStatusBarItem() { bar = { text: '', tooltip: '', command: '', show() {}, dispose() {} }; return bar; },
       showInformationMessage() {}, showWarningMessage() {},
-      async showTextDocument(document) { shown.push(document); }
+      createWebviewPanel(type, title, column, options) {
+        const panel = {
+          type, title, column, options, webview: { html: '' }, revealCount: 0,
+          reveal() { this.revealCount++; },
+          onDidDispose(callback) { this.disposeCallback = callback; return disposable(); },
+          dispose() { this.disposeCallback?.(); }
+        };
+        panels.push(panel);
+        return panel;
+      }
     },
     workspace: {
       workspaceFolders: [{ uri: root }],
@@ -68,10 +78,19 @@ test('extension end-to-end: start → edit → save → report → stop and loca
     document.isDirty = false;
     listeners.save(document);
     await commands['pohw.report']();
-    assert.match(shown.at(-1).content, /Human editing evidence score/);
-    assert.match(shown.at(-1).content, /Monitored coverage/);
-    assert.match(shown.at(-1).content, /example\.ts/);
+    assert.equal(panels.length, 1);
+    assert.equal(panels[0].type, 'pohwProvenanceReport');
+    assert.equal(panels[0].options.enableScripts, false);
+    assert.match(panels[0].webview.html, /Human editing evidence score/);
+    assert.match(panels[0].webview.html, /Monitored coverage/);
+    assert.match(panels[0].webview.html, /example\.ts/);
+    await commands['pohw.report']();
+    assert.equal(panels.length, 1, 'report must reuse one read-only Webview, not create an unsaved document');
+    panels[0].dispose();
+    await commands['pohw.report']();
+    assert.equal(panels.length, 2, 'after closing the panel, reopening creates a fresh read-only Webview');
     await commands['pohw.stop']();
+    assert.match(panels[1].webview.html, /Status: Paused/);
     assert.match(bar.text, /Paused/);
     assert.equal(written.size, 1);
     const stored = JSON.parse([...written.values()][0]);
