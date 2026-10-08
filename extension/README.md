@@ -1,4 +1,4 @@
-# PoHW Coding Monitor (v0.3.1 — Independent Git Evidence Branch)
+# PoHW Coding Monitor (v0.3.2 — Verified Report Links)
 
 Local VS Code extension that records document changes and saves while a monitoring session is active. It calculates a **rule-based editing-behavior evidence score** and tracks which current code spans have monitor evidence.
 
@@ -15,6 +15,9 @@ Local VS Code extension that records document changes and saves while a monitori
 > **v0.3.1 note:** This release fixes first-time publication of the independent `pohw-badges` branch. If a project has already initialized badges, rerun `PoHW: Enable GitHub Badge`, accept the workflow template update, and commit/push the updated `.github/workflows/pohw-verify.yml` once. The score receipt remains on `pohw-evidence`; no new source-code commit is required for the verifier fix.
 
 ## GitHub Badge + signed Commit Evidence (v0.3)
+
+**v0.3.2 update:** The Editing Score and Monitored badges link to a CI-generated `pohw-badges/REPORT.md` containing validated metrics, the source commit and code digest, and the signed receipt link. The Receipt Verification badge still links to the repository's GitHub Actions workflow. For previously enabled repositories, rerun `PoHW: Enable GitHub Badge`, review and commit the updated `.github/workflows/pohw-verify.yml` and README badge block once, then push the default branch.
+
 
 The badge is opt-in per GitHub repository. Open the **repository root** in VS Code. Each signed receipt is bound to the **SHA of an already-created source commit**; the evidence record is committed in `pohw-evidence`, independently of the user's working tree and staging area. The Ed25519 private key stays in VS Code extension `globalStorage`. No private key or raw source is uploaded in the receipt.
 
