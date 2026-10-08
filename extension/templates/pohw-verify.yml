@@ -71,13 +71,13 @@ jobs:
           const summary = JSON.parse(fs.readFileSync(process.env.VERIFIED_FILE, 'utf8'));
           const repo = process.env.GITHUB_REPOSITORY;
           const commit = process.env.GITHUB_SHA;
-          if (!/^[\\w.-]+\\/[\\w.-]+$/.test(repo) || !/^[a-f0-9]{40}$/.test(commit)) {
+          if (!/^[\w.-]+\/[\w.-]+$/.test(repo) || !/^[a-f0-9]{40}$/.test(commit)) {
             throw new Error('Invalid GitHub repository or source commit');
           }
           const score = typeof summary.humanScore === 'number' ? summary.humanScore + '%' : 'N/A';
           const coverage = String(summary.monitoredCoverage) + '%';
           const sha = /^[a-f0-9]{64}$/.test(summary.sourceCodeHash || '') ? summary.sourceCodeHash : 'Not provided';
-          const verifiedAt = typeof summary.issuedAt === 'string' && /^\\d{4}-\\d{2}-\\d{2}T/.test(summary.issuedAt) ? summary.issuedAt : 'Not provided';
+          const verifiedAt = typeof summary.issuedAt === 'string' && /^\d{4}-\d{2}-\d{2}T/.test(summary.issuedAt) ? summary.issuedAt : 'Not provided';
           const report = [
             '# PoHW Verified Editing Report',
             '',
@@ -104,7 +104,7 @@ jobs:
             '',
             'Ed25519 verification confirms that the committed source matches the self-attested signed receipt. It does **not** prove AI was absent or that the underlying editing history could not have been fabricated.',
             ''
-          ].join('\\n');
+          ].join('\n');
           fs.writeFileSync('REPORT.md', report);
           NODE
           git add summary.json REPORT.md
