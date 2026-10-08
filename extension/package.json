@@ -28,7 +28,7 @@
   },
   "scripts": {
     "build": "tsc -p .",
-    "test": "npm run build && node --test out/core.test.js",
+    "test": "npm run build && node --test out/core.test.js test/integration.test.cjs",
     "package": "vsce package --no-dependencies"
   },
   "devDependencies": {
