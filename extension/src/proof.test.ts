@@ -68,19 +68,14 @@ test('malformed receipt metrics are rejected even with a valid signature', () =>
     assert.throws(() => verifySignedReceipt(bad, keys.publicKeyPem, manifest), /inconsistent/);
   } finally { fs.rmSync(root, { recursive: true, force: true }); }
 });
-test('idempotent badges and deterministic JSON canonicalization', () => {
-  const md = badgeMarkdown('alice', 'demo', 'main');
+test('single verified badge is idempotent, linked to report and does not show CI-status badge', () => {
+  const md = badgeMarkdown('alice', 'demo', 'dev');
   const before = '# Demo\n';
   const once = updateBadgeReadme(before, md);
   assert.equal(updateBadgeReadme(once, md), once);
-  assert.match(once, /pohw-badges%2Fsummary\.json/);
-  assert.match(once, /actions\/workflows\/pohw-verify\.yml/);
+  assert.match(once, /pohw-badges\/badge\.svg/);
+  assert.equal((once.match(/blob\/pohw-badges\/REPORT\.md/g) || []).length, 1);
+  assert.doesNotMatch(once, /PoHW Receipt Verification|PoHW Monitored]\(/);
   assert.throws(() => updateBadgeReadme('<!-- pohw-badges:start -->', md), /Malformed/);
   assert.equal(canonicalJson({ b: 2, a: [3, { y: 2, x: 1 }] }), canonicalJson({ a: [3, { x: 1, y: 2 }], b: 2 }));
-});
-test('editing badges navigate to the published report, while verification navigates to Actions', () => {
-  const md = badgeMarkdown('alice', 'demo', 'dev');
-  assert.equal(md.split('https://github.com/alice/demo/blob/pohw-badges/REPORT.md').length - 1, 2);
-  assert.match(md, /PoHW Receipt Verification.*actions\/workflows\/pohw-verify\.yml/);
-  assert.ok(!md.includes('](https://github.com/alice/demo/actions/workflows/pohw-verify.yml)\n[![PoHW Monitored]'));
 });
