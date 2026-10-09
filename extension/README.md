@@ -1,4 +1,4 @@
-# PoHW Coding Monitor (v0.3.2 — Verified Report Links)
+# PoHW Coding Monitor (v0.3.3 — Single Verified Badge)
 
 Local VS Code extension that records document changes and saves while a monitoring session is active. It calculates a **rule-based editing-behavior evidence score** and tracks which current code spans have monitor evidence.
 
@@ -16,7 +16,7 @@ Local VS Code extension that records document changes and saves while a monitori
 
 ## GitHub Badge + signed Commit Evidence (v0.3)
 
-**v0.3.2 update:** The Editing Score and Monitored badges link to a CI-generated `pohw-badges/REPORT.md` containing validated metrics, the source commit and code digest, and the signed receipt link. The Receipt Verification badge still links to the repository's GitHub Actions workflow. For previously enabled repositories, rerun `PoHW: Enable GitHub Badge`, review and commit the updated `.github/workflows/pohw-verify.yml` and README badge block once, then push the default branch.
+**v0.3.3 update:** Replaces the three badges with one `PoHW | Human xx% | Coverage yy%` SVG linking to the CI-generated report. Failed Receipt verification publishes a transparent image instead of stale numeric results, and removes the old `summary.json`. For existing repositories, rerun `PoHW: Enable GitHub Badge`, review and commit the updated workflow and README badge block once, then push.
 
 
 The badge is opt-in per GitHub repository. Open the **repository root** in VS Code. Each signed receipt is bound to the **SHA of an already-created source commit**; the evidence record is committed in `pohw-evidence`, independently of the user's working tree and staging area. The Ed25519 private key stays in VS Code extension `globalStorage`. No private key or raw source is uploaded in the receipt.
@@ -35,8 +35,8 @@ The badge is opt-in per GitHub repository. Open the **repository root** in VS Co
 
 1. Start monitoring, edit and save as normal, stop monitoring whenever you like. `PoHW: Show Provenance Report` is a read-only Webview.
 2. **Commit your code exactly as you normally do** (`git commit` or VS Code Source Control). About every 5 seconds while VS Code is open, PoHW checks for new local commits. It signs each newly detected commit, writes an independent evidence commit to local `refs/pohw/evidence`, and automatically pushes that ref to remote **`pohw-evidence`**. It does not stage, commit, checkout, or push your source branch.
-3. **Push your ordinary source branch normally.** On source push, GitHub Actions waits up to approximately 90 seconds for the matching `pohw-evidence/receipts/<source-sha>.json`, verifies signature and source contents from the exact source commit, then (on the default branch) publishes verified `summary.json` to `pohw-badges`.
-4. Badges in the README read only the CI-published `pohw-badges` JSON and verification workflow status. Failed or missing receipt checks do not refresh numeric badges; the previous values may be stale.
+3. **Push your ordinary source branch normally.** On source push, GitHub Actions waits up to approximately 90 seconds for the matching `pohw-evidence/receipts/<source-sha>.json`, verifies signature and source contents from the exact source commit, then (on the default branch) publishes a combined SVG badge, verified `summary.json`, and detailed report to `pohw-badges`.
+4. The README shows one CI-generated SVG containing both scores. On failed verification, the workflow replaces the SVG with a transparent placeholder and deletes the previous numerical summary. GitHub image caching or an unavailable CI runner may delay or prevent this suppression.
 
 If a commit was created while VS Code was closed, or merged on GitHub's website, open that Git commit in the local repo and execute **`PoHW: Sync Commit Evidence`**. This also retries failed evidence pushes. It does **not** create a normal source commit; use this command only when necessary. The legacy command `PoHW: Publish Signed Receipt` is an alias.
 
