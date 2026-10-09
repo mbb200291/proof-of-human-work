@@ -3,7 +3,7 @@
 **語言：** [繁體中文](README.md) | [English](README.en.md)
 
 [![VS Code Extension CI](https://github.com/mbb200291/proof-of-human-work/actions/workflows/vscode-extension.yml/badge.svg?branch=main)](https://github.com/mbb200291/proof-of-human-work/actions/workflows/vscode-extension.yml)
-[![Coding Monitor Version](https://img.shields.io/badge/Coding%20Monitor-v0.3.2-blue)](https://github.com/mbb200291/proof-of-human-work)
+[![Coding Monitor Version](https://img.shields.io/badge/Coding%20Monitor-v0.3.3-blue)](https://github.com/mbb200291/proof-of-human-work)
 ![License](https://img.shields.io/badge/license-MIT-green)
 
 > 研究如何為人類在數位工作中的實際參與建立可追溯、可驗證的證據。
@@ -113,7 +113,7 @@ PoHW: Start Monitoring → 編輯與存檔 → PoHW: Stop Monitoring
 | --- | --- |
 | `main` / `dev`（Default Branch） | 使用者程式碼與初次設定檔 |
 | `pohw-evidence` | 以 `receipts/<commit-sha>.json` 保存簽署證據，無須 Merge 回程式碼分支 |
-| `pohw-badges` | CI 驗證後發布 `summary.json` 與 `REPORT.md`，供 README Badges 與詳細報告讀取 |
+| `pohw-badges` | CI 通過時發布合併分數徽章 `badge.svg`、`summary.json` 與 `REPORT.md`；驗證失敗時改發布透明 SVG，不顯示舊分數 |
 
 若在 VS Code 關閉期間 Commit、在 GitHub 網頁完成 Merge，或證據 Push 失敗，先在本機取得欲驗證的 Commit，再執行 **PoHW: Sync Commit Evidence**。CI 在程式碼 Push 時最多等待約 90 秒取得同 SHA 的證據；逾時可於證據同步後重跑 Actions。
 
@@ -140,8 +140,8 @@ node .pohw/verify.cjs . /tmp/pohw-receipt.json /tmp/pohw-summary.json
 
 | 現象 | 原因與處理 |
 | --- | --- |
-| Badge 顯示 `resource not found` | 尚未成功發布 `pohw-badges/summary.json`；檢查 Actions 的 verify／publish 工作 |
-| Badge 顯示 `no status` | 確認 workflow 已提交到 GitHub 真正的 Default Branch，README 連結分支也一致 |
+| Badge 未顯示 | 尚未建立 `pohw-badges/badge.svg`，或最新一次 Receipt 驗證失敗；請檢查 Actions |
+| Badge 顯示舊資料 | CI 與 GitHub 圖片快取可能造成短暫延遲；以詳細報告的 Commit SHA 判斷資料是否過期 |
 | CI 顯示 missing evidence | `pohw-evidence` 沒有對應 SHA 的 Receipt；於相同 HEAD 執行 Sync，再重新執行 Workflow |
 | 首次建立 Badge 分支失敗 | 使用 **v0.3.1+** 重新執行 Enable GitHub Badge 並更新 Workflow；確認 Actions 寫入權限 |
 | Human Score = N/A、Coverage = 0% | 目前程式碼無可歸屬的受監控編輯區段，或 Commit 與本機監控內容不一致 |
@@ -149,9 +149,9 @@ node .pohw/verify.cjs . /tmp/pohw-receipt.json /tmp/pohw-summary.json
 | 曾安裝 v0.2 舊版 Badge | 重新執行 Enable GitHub Badge 升級模板；舊 `.pohw/receipt.json` 不再用於新制，可在一般 Commit 移除 |
 | 如何修改 Default Branch 設定？ | 重新執行 Enable GitHub Badge 更新 README 連結；Badge 數值仍以 GitHub **實際** Default Branch 發布為準 |
 
-**徽章點擊行為：** Coding Monitor 版本徽章連到 [PoHW 專案首頁](https://github.com/mbb200291/proof-of-human-work)；Editing Score 與 Monitored 連到各專案 CI 產生的 `pohw-badges/REPORT.md`，內含分數、監控涵蓋率、Commit SHA、原始碼雜湊與簽章證據連結；Receipt Verification 連到各專案的 GitHub Actions。
+**徽章點擊行為：** Coding Monitor 版本徽章連到 [PoHW 專案首頁](https://github.com/mbb200291/proof-of-human-work)。使用本外掛的專案只會顯示一個 `PoHW | Human xx% | Coverage yy%` 徽章，點擊可查看 `pohw-badges/REPORT.md`，內含驗證結果、Commit SHA 與簽署證據連結。不再額外顯示 Receipt Verification 徽章。
 
-Badge 只顯示**最近一次成功驗證的統計結果**；當新 Commit 驗證失敗時，舊數值可能仍顯示，因此應搭配 Verification Workflow 狀態與報告 Commit SHA 判讀。
+**驗證結果控制顯示：** GitHub Actions 只有在 Receipt 簽章及程式碼一致性驗證通過時才發布兩項數值；失敗時會撤除 `summary.json` 並將 `badge.svg` 改成透明占位圖，避免繼續呈現先前的分數。GitHub 圖片快取及 CI 執行延遲可能造成短暫殘留，且若 CI 完全無法執行或發布失敗，仍無法保證即時隱藏。
 
 ## 5. 評分方法、安全性及隱私界線
 
