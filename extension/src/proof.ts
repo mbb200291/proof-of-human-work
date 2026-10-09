@@ -145,17 +145,13 @@ export function verifiedBadgeSummary(receipt: SignedReceipt, sourceCommit: strin
   };
 }
 
-/** Badge initialization may be run repeatedly without duplicating the README block. */
-export function badgeMarkdown(owner: string, repo: string, defaultBranch: string): string {
-  const base = `https://raw.githubusercontent.com/${owner}/${repo}/pohw-badges/summary.json`;
-  const dynamic = (field: string, label: string, color: string): string =>
-    `https://img.shields.io/badge/dynamic/json?url=${encodeURIComponent(base)}&query=${encodeURIComponent('$.' + field)}&suffix=%25&label=${encodeURIComponent(label)}&color=${color}`;
+/** The public badge is a single CI-generated SVG, never an unverified score feed. */
+export function badgeMarkdown(owner: string, repo: string, _defaultBranch: string): string {
+  const badge = `https://raw.githubusercontent.com/${owner}/${repo}/pohw-badges/badge.svg`;
   const report = `https://github.com/${owner}/${repo}/blob/pohw-badges/REPORT.md`;
   return [
     '<!-- pohw-badges:start -->',
-    `[![PoHW Editing Score](${dynamic('humanScore', 'PoHW Editing Score', 'blue')})](${report})`,
-    `[![PoHW Monitored](${dynamic('monitoredCoverage', 'PoHW Monitored', 'informational')})](${report})`,
-    `[![PoHW Receipt Verification](https://github.com/${owner}/${repo}/actions/workflows/pohw-verify.yml/badge.svg?branch=${encodeURIComponent(defaultBranch)})](https://github.com/${owner}/${repo}/actions/workflows/pohw-verify.yml)`,
+    `[![PoHW Human Editing Score and Monitored Coverage](${badge})](${report})`,
     '<!-- pohw-badges:end -->'
   ].join('\n');
 }
