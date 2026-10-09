@@ -69,7 +69,9 @@ test('badge end to end: init -> code commit -> separate evidence push -> standal
       assert.ok(fs.existsSync(path.join(root, f)), f);
     }
     const md = fs.readFileSync(path.join(root, 'README.md'), 'utf8');
-    assert.match(md, /PoHW Editing Score/);
+    assert.match(md, /PoHW Human Editing Score and Monitored Coverage/);
+    assert.doesNotMatch(md, /PoHW Receipt Verification/);
+    assert.match(md, /pohw-badges\/badge\.svg/);
     await commands['pohw.enableBadge']();
     assert.equal((fs.readFileSync(path.join(root, 'README.md'), 'utf8').match(/<!-- pohw-badges:start -->/g) || []).length, 1);
     await commands['pohw.start']();
