@@ -3,7 +3,7 @@
 **Language:** [繁體中文](README.md) | [English](README.en.md)
 
 [![VS Code Extension CI](https://github.com/mbb200291/proof-of-human-work/actions/workflows/vscode-extension.yml/badge.svg?branch=main)](https://github.com/mbb200291/proof-of-human-work/actions/workflows/vscode-extension.yml)
-[![Coding Monitor Version](https://img.shields.io/badge/Coding%20Monitor-v0.3.2-blue)](https://github.com/mbb200291/proof-of-human-work)
+[![Coding Monitor Version](https://img.shields.io/badge/Coding%20Monitor-v0.3.3-blue)](https://github.com/mbb200291/proof-of-human-work)
 ![License](https://img.shields.io/badge/license-MIT-green)
 
 > Researching traceable and verifiable evidence of human participation in digital work.
@@ -113,7 +113,7 @@ When the repository is initialized and the VS Code extension is active, PoHW che
 | --- | --- |
 | `main` / `dev` (actual default branch) | Your source code and initial configuration |
 | `pohw-evidence` | Signed receipts indexed as `receipts/<commit-sha>.json`; never merged into the source branch |
-| `pohw-badges` | CI-verified `summary.json` and `REPORT.md` for badges and detailed verification |
+| `pohw-badges` | CI-controlled `badge.svg`, `summary.json`, and `REPORT.md`; failed verification publishes a transparent badge and removes stale scores |
 
 If you commit while VS Code is closed, merge via GitHub's web UI, or encounter a failed evidence push, first fetch the relevant source commit locally, then run **PoHW: Sync Commit Evidence**. On source pushes, CI waits up to about **90 seconds** for evidence matching the source commit. If the wait expires, synchronize the evidence and rerun the workflow.
 
@@ -139,19 +139,19 @@ The verifier compares the **Git commit tree** with the receipt and signature; it
 ### Badge destinations and detailed verification report
 
 - The **Coding Monitor version** badge on this repository links to the [PoHW homepage](https://github.com/mbb200291/proof-of-human-work).
-- **PoHW Editing Score** and **PoHW Monitored**, when installed in another repository, link to that repository's **`pohw-badges/REPORT.md`**. CI generates this report only from successfully validated results, including the score, coverage, source commit, content digest, and a link to the signed evidence receipt.
-- **PoHW Receipt Verification** links to that repository's GitHub Actions verification workflow.
+- A single **PoHW Human / Coverage** badge displays both values and links to that repository's **`pohw-badges/REPORT.md`** (including source commit and receipt). On verification failure, CI publishes a transparent SVG and removes the previous numeric summary.
+- The separate **PoHW Receipt Verification** badge has been removed. Receipt verification is still enforced in GitHub Actions and linked from the detailed report.
 
-Numeric badges show the **last successfully verified** result, which may become stale if a later commit fails verification. Compare the report's source commit with the current default branch and check the workflow status.
+The combined badge only displays numerical values after the Receipt passes verification. A failed verification replaces the SVG with a transparent image and removes the prior summary. GitHub image caches can temporarily retain previous results; if CI does not run or publishing fails, immediate hiding cannot be guaranteed.
 
-**Upgrading an existing badge configuration to v0.3.2:** Re-run **PoHW: Enable GitHub Badge**, review and commit the updated README badge block and `.github/workflows/pohw-verify.yml` once, then push to the repository's default branch. The next successful CI publication creates `REPORT.md` on `pohw-badges`. No separate receipt commit is needed.
+**Upgrading an existing badge configuration to v0.3.3:** Re-run **PoHW: Enable GitHub Badge**, review and commit the updated README badge block and `.github/workflows/pohw-verify.yml` once, then push to the repository's default branch. The next successful CI publication creates `REPORT.md` on `pohw-badges`. No separate receipt commit is needed.
 
 ## 4. Troubleshooting
 
 | Symptom | Cause / resolution |
 | --- | --- |
-| Score badge says `resource not found` | No successful publication of `pohw-badges/summary.json`; inspect the workflow's verify/publish jobs |
-| Verification badge says `no status` | Ensure the workflow and README branch parameter match the actual default branch |
+| No numerical badge appears | The badge branch has not been initialized or the latest verification failed; inspect the workflow's verify/publish jobs |
+| Badge shows stale data | GitHub Actions execution and image caching can delay updates; inspect the report's source commit SHA |
 | Detailed report is unavailable | Upgrade the workflow and wait for a successful run that publishes `pohw-badges/REPORT.md` |
 | CI reports missing evidence | There is no receipt for that source SHA in `pohw-evidence`; run Sync for the same HEAD, then rerun the workflow |
 | First badge-branch publication fails | Use v0.3.1 or later to refresh the workflow template, and confirm GitHub Actions write permissions |
