@@ -20,9 +20,11 @@
 
 需求：**VS Code 1.90+**。目前提供 VSIX，尚未發布至 VS Code Marketplace。
 
-1. 前往 [VS Code Extension CI](https://github.com/mbb200291/proof-of-human-work/actions/workflows/vscode-extension.yml)，開啟最新成功執行紀錄。
-2. 從 **Artifacts** 下載 `pohw-coding-monitor-vsix`，解壓縮取得 `.vsix`。
-3. 在 VS Code 執行 **Extensions: Install from VSIX...** 安裝。
+**[下載最新版 VSIX](https://github.com/mbb200291/proof-of-human-work/releases/download/continuous/pohw-coding-monitor.vsix)** · [查看 Continuous Release](https://github.com/mbb200291/proof-of-human-work/releases/tag/continuous)
+
+下載後，在 VS Code 執行 **Extensions: Install from VSIX...** 安裝。
+
+固定下載連結由 GitHub Actions 在每次 `main` Commit 通過測試及打包後自動更新。失敗的建置不會取代現有版本。
 
 ## 基本使用
 
