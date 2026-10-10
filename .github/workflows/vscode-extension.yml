@@ -1,13 +1,15 @@
-name: VS Code Extension MVP
+name: VS Code Extension CI
 
 on:
   push:
-    paths:
-      - "extension/**"
-      - ".github/workflows/vscode-extension.yml"
+    branches:
+      - main
+      - "feature/**"
   pull_request:
     paths:
       - "extension/**"
+      - ".github/workflows/vscode-extension.yml"
+  workflow_dispatch:
 
 jobs:
   build-and-test:
@@ -26,9 +28,61 @@ jobs:
       - name: Package installable VSIX
         working-directory: extension
         run: npm run package
-      - name: Upload VSIX
+      - name: Upload VSIX artifact
         uses: actions/upload-artifact@v4
         with:
           name: pohw-coding-monitor-vsix
           path: extension/*.vsix
           if-no-files-found: error
+
+  publish-continuous:
+    name: Publish continuous VSIX
+    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+    needs: build-and-test
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    concurrency:
+      group: pohw-continuous-release
+      cancel-in-progress: false
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: pohw-coding-monitor-vsix
+          path: ${{ runner.temp }}/pohw-build
+      - name: Publish latest successful main build
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BUILD_DIR: ${{ runner.temp }}/pohw-build
+          RELEASE_FILE: ${{ runner.temp }}/pohw-coding-monitor.vsix
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Skip delayed builds for superseded commits.
+          latest_sha="$(gh api "repos/${GITHUB_REPOSITORY}/git/ref/heads/main" --jq '.object.sha')"
+          if [[ "$latest_sha" != "$GITHUB_SHA" ]]; then
+            echo "Skipping superseded build $GITHUB_SHA (main is $latest_sha)"
+            exit 0
+          fi
+
+          shopt -s nullglob
+          packages=("$BUILD_DIR"/*.vsix)
+          if [[ ${#packages[@]} -ne 1 ]]; then
+            echo "Expected one VSIX, found ${#packages[@]}" >&2
+            exit 1
+          fi
+          cp "${packages[0]}" "$RELEASE_FILE"
+          printf 'Continuous build from main.\n\nSource commit: `%s`\n\nThis asset is replaced after each successful main build. It is not a versioned release.\n' "$GITHUB_SHA" > "$RUNNER_TEMP/release-notes.md"
+
+          if gh release view continuous --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release upload continuous "$RELEASE_FILE" --clobber --repo "$GITHUB_REPOSITORY"
+            gh release edit continuous --repo "$GITHUB_REPOSITORY" \
+              --title "Continuous build (main)" --prerelease \
+              --notes-file "$RUNNER_TEMP/release-notes.md"
+          else
+            gh release create continuous "$RELEASE_FILE" --repo "$GITHUB_REPOSITORY" \
+              --target "$GITHUB_SHA" \
+              --title "Continuous build (main)" --prerelease \
+              --notes-file "$RUNNER_TEMP/release-notes.md"
+          fi
+          echo "VSIX: https://github.com/$GITHUB_REPOSITORY/releases/download/continuous/pohw-coding-monitor.vsix"
