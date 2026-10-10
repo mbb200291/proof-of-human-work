@@ -18,11 +18,13 @@
 
 ## Installation
 
-**Requires VS Code 1.90+.** Install a VSIX from GitHub Actions. The extension is not currently distributed through the VS Code Marketplace.
+**Requires VS Code 1.90+.** The extension is not currently distributed through the VS Code Marketplace.
 
-1. Open the [VS Code Extension CI workflow](https://github.com/mbb200291/proof-of-human-work/actions/workflows/vscode-extension.yml) and select the latest successful run.
-2. Download the `pohw-coding-monitor-vsix` artifact and extract the `.vsix`.
-3. In VS Code, run **Extensions: Install from VSIX...**.
+**[Download the latest VSIX](https://github.com/mbb200291/proof-of-human-work/releases/download/continuous/pohw-coding-monitor.vsix)** · [Continuous Release](https://github.com/mbb200291/proof-of-human-work/releases/tag/continuous)
+
+In VS Code, run **Extensions: Install from VSIX...** and select the downloaded file.
+
+The download URL stays constant. GitHub Actions updates the asset after each successful test and package run on `main`; failed builds leave the previous package available.
 
 ## Usage
 
