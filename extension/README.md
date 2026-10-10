@@ -18,7 +18,7 @@ npm test
 npm run package
 ```
 
-Use **Extensions: Install from VSIX...** for the generated package. For debugging, open `extension/` in VS Code and press **F5**.
+Use **Extensions: Install from VSIX...** for the generated package, or [download the latest successful `main` build](https://github.com/mbb200291/proof-of-human-work/releases/download/continuous/pohw-coding-monitor.vsix) directly. For debugging, open `extension/` in VS Code and press **F5**.
 
 ## Commands
 
