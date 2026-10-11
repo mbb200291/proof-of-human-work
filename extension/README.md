@@ -61,13 +61,13 @@ Supported formats and limits are controlled by extension settings.
    - An embedded badge block in the repository's `README.md`
 3. Review, commit, and push the generated setup files on the default branch once. Grant GitHub Actions **Read and write permissions** for publishing `pohw-badges`.
 4. Commit source changes normally. While the extension is active, PoHW checks for commits approximately every five seconds, signs the corresponding source commit and pushes the receipt to `pohw-evidence`.
-5. Push the source branch normally. On the default branch, GitHub Actions checks the signed receipt and source tree and publishes `badge.svg`, `summary.json`, and `REPORT.md` to `pohw-badges`.
+5. Push the source branch normally. On the default branch, GitHub Actions checks the signed receipt and source tree and publishes separate `editing.svg` and `coverage.svg` badges, `summary.json`, and `REPORT.md` to `pohw-badges`.
 
 | Ref/branch | Content |
 | --- | --- |
 | Source default branch | Project source code and one-time setup files |
 | `pohw-evidence` | Signed receipts at `receipts/<source-commit-sha>.json` |
-| `pohw-badges` | CI-controlled badge SVG, metrics and verification report |
+| `pohw-badges` | CI-controlled editing and coverage SVGs, metrics and verification report |
 
 No additional source-code commit is required for each receipt. PoHW uses an independent Git index and Git object operations; the active HEAD, staging area, and working tree are preserved. If a committed file does not exactly match the monitored buffer, its content is treated as Unverified for that commit.
 
@@ -94,10 +94,10 @@ The verifier reads the committed Git tree and checks the receipt's Ed25519 signa
 
 ## Operational notes
 
-- **Missing/transparent badge:** The latest receipt failed validation, or the badge branch has not been published. Inspect the repository's `PoHW Receipt Verification` workflow and check Actions write permissions.
-- **Stale badge:** GitHub image caches or workflow delays may delay an update. The report records the verified source commit.
+- **Missing/transparent badges:** The latest receipt failed validation, or the badge branch has not been published. Inspect the repository's `PoHW Receipt Verification` workflow and check Actions write permissions.
+- **Stale badges:** GitHub image caches or workflow delays may delay an update. The report records the verified source commit.
 - **Missing evidence:** Synchronize the exact source commit and rerun CI.
-- **Existing badge installation:** Run **PoHW: Enable GitHub Badge** after upgrading the extension; review and commit the updated generated files once.
+- **Existing badge installation:** After upgrading to v0.3.4, run **PoHW: Enable GitHub Badge** to update both the README badge block and CI workflow; review, commit, and push the generated changes once.
 - **Signing keys:** The private key is stored in local VS Code extension `globalStorage`. Securely back it up. A lost key requires an explicit public-key rotation.
 
 ## Assurance and privacy

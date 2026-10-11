@@ -68,14 +68,16 @@ test('malformed receipt metrics are rejected even with a valid signature', () =>
     assert.throws(() => verifySignedReceipt(bad, keys.publicKeyPem, manifest), /inconsistent/);
   } finally { fs.rmSync(root, { recursive: true, force: true }); }
 });
-test('single verified badge is idempotent, linked to report and does not show CI-status badge', () => {
+test('separate editing and coverage badges are idempotent and link to the verified report', () => {
   const md = badgeMarkdown('alice', 'demo', 'dev');
   const before = '# Demo\n';
   const once = updateBadgeReadme(before, md);
   assert.equal(updateBadgeReadme(once, md), once);
-  assert.match(once, /pohw-badges\/badge\.svg/);
-  assert.equal((once.match(/blob\/pohw-badges\/REPORT\.md/g) || []).length, 1);
-  assert.doesNotMatch(once, /PoHW Receipt Verification|PoHW Monitored]\(/);
+  assert.match(once, /pohw-badges\/editing\.svg/);
+  assert.match(once, /pohw-badges\/coverage\.svg/);
+  assert.equal((once.match(/blob\/pohw-badges\/REPORT\.md/g) || []).length, 2);
+  assert.equal((once.match(/<!-- pohw-badges:start -->/g) || []).length, 1);
+  assert.doesNotMatch(once, /pohw-badges\/badge\.svg|PoHW Receipt Verification/);
   assert.throws(() => updateBadgeReadme('<!-- pohw-badges:start -->', md), /Malformed/);
   assert.equal(canonicalJson({ b: 2, a: [3, { y: 2, x: 1 }] }), canonicalJson({ a: [3, { x: 1, y: 2 }], b: 2 }));
 });

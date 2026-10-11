@@ -3,7 +3,7 @@
 [繁體中文](README.md) · [English](README.en.md)
 
 [![VS Code Extension CI](https://github.com/mbb200291/proof-of-human-work/actions/workflows/vscode-extension.yml/badge.svg?branch=main)](https://github.com/mbb200291/proof-of-human-work/actions/workflows/vscode-extension.yml)
-[![Version](https://img.shields.io/badge/Coding%20Monitor-v0.3.3-blue)](https://github.com/mbb200291/proof-of-human-work)
+[![Version](https://img.shields.io/badge/Coding%20Monitor-v0.3.4-blue)](https://github.com/mbb200291/proof-of-human-work)
 [![License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
 **PoHW Coding Monitor** 是追蹤程式碼編輯來源的 VS Code 外掛。透過編輯與存檔事件記錄程式碼形成過程，計算人類編輯行為特徵分數，並為 Git Commit 產生可驗證的簽署紀錄。
@@ -13,7 +13,7 @@
 - **編輯監控**：記錄文件變更與存檔，追蹤目前程式碼區段的來源。
 - **編輯證據評分**：提供 Human Editing Evidence Score、Monitored Coverage 與 Unverified 區段；相同內容的程式碼搬移可繼承來源紀錄。
 - **Commit 證據**：使用 Ed25519 簽署對應 Git Commit 的 Receipt，獨立保存至 `pohw-evidence` 分支。
-- **GitHub 徽章**：由 GitHub Actions 驗證簽章與程式碼內容，在 `pohw-badges` 發布分數徽章及詳細報告。
+- **GitHub 徽章**：由 GitHub Actions 驗證簽章與程式碼內容，在 `pohw-badges` 發布 Editing 與 Coverage 兩個獨立徽章及詳細報告。
 - **本機報告**：在 VS Code 唯讀 Webview 檢視各檔案評分與監控紀錄。
 
 ## 安裝
@@ -44,7 +44,7 @@
 
 在要啟用的 **Git 儲存庫根目錄**執行 `PoHW: Enable GitHub Badge`，選擇實際的 GitHub 預設分支（例如 `main` 或 `dev`）。
 
-首次設定會產生公鑰、驗證器、GitHub Actions 工作流程，並在專案 README 加入徽章。**首次設定檔須由使用者正常 Commit、Push 一次**，同時開啟 GitHub Actions 的寫入權限。往後使用既有 Git 工作流程：
+首次設定會產生公鑰、驗證器、GitHub Actions 工作流程，並在專案 README 加入兩個徽章。**首次設定檔須由使用者正常 Commit、Push 一次**，同時開啟 GitHub Actions 的寫入權限。往後使用既有 Git 工作流程：
 
 ```text
 Start Monitoring → 編輯、存檔 → Stop Monitoring
@@ -57,7 +57,7 @@ Start Monitoring → 編輯、存檔 → Stop Monitoring
                              ↓
                  GitHub Actions 驗證
                              ↓
-                   README 顯示徽章
+                 README 顯示兩個徽章
 ```
 
 PoHW 不會替使用者提交或推送程式碼分支，也不會修改原有的 Staging Area。外掛啟用期間約每 5 秒檢查新的本機 Commit；需要補同步時可執行 `PoHW: Sync Commit Evidence`。

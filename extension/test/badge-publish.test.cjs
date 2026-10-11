@@ -27,7 +27,7 @@ const prepare = stepScript('Create badge output');
 const publish = stepScript('Publish independent badge branch');
 const git = (cwd,...args) => execFileSync('git',args,{cwd,encoding:'utf8',stdio:['ignore','pipe','pipe']}).trim();
 
-test('publishes unified values on success and removes them after verification failure', () => {
+test('publishes compact editing and coverage badges and hides both on verification failure', () => {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(),'pohw-badge-test-'));
   const root=path.join(tmp,'source'), remote=path.join(tmp,'origin.git');
   const output=path.join(tmp,'generated'), verified=path.join(tmp,'verified.json');
@@ -55,17 +55,23 @@ test('publishes unified values on success and removes them after verification fa
       execFileSync('bash',['-e','-c',prepare],{cwd:root,env,stdio:['ignore','pipe','pipe']});
       execFileSync('bash',['-e','-c',publish],{cwd:root,env,stdio:['ignore','pipe','pipe']});
       const show=file=>git(tmp,'--git-dir='+remote,'show','refs/heads/pohw-badges:'+file);
-      return {show,svg:show('badge.svg'),report:show('REPORT.md')};
+      return {show,editing:show('editing.svg'),coverage:show('coverage.svg'),report:show('REPORT.md')};
     };
     const pass=run('success');
-    assert.match(pass.svg,/Human 86\.5% \| Coverage 92\.3%/);
+    assert.match(pass.editing,/PoHW Editing: 86\.5%/);
+    assert.match(pass.coverage,/PoHW Coverage: 92\.3%/);
+    assert.match(pass.editing,/width="164" height="20"/);
+    assert.match(pass.coverage,/width="176" height="20"/);
+    assert.throws(()=>pass.show('badge.svg'), 'legacy combined badge must be removed');
     assert.match(pass.report,/PoHW Verified Editing Report/);
     assert.equal(JSON.parse(pass.show('summary.json')).sourceCommit,commit);
     assert.equal(git(root,'rev-parse','refs/heads/dev'),commit);
     git(root,'switch','dev');
     const fail=run('failure');
-    assert.match(fail.svg,/width="1" height="1"/);
-    assert.doesNotMatch(fail.svg,/Human 86/);
+    for (const svg of [fail.editing,fail.coverage]) {
+      assert.match(svg,/width="1" height="1"/);
+      assert.doesNotMatch(svg,/86\.5|92\.3/);
+    }
     assert.match(fail.report,/Evidence Unavailable/);
     assert.throws(()=>fail.show('summary.json'));
     assert.equal(git(root,'rev-parse','refs/heads/dev'),commit);

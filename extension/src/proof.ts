@@ -145,13 +145,13 @@ export function verifiedBadgeSummary(receipt: SignedReceipt, sourceCommit: strin
   };
 }
 
-/** The public badge is a single CI-generated SVG, never an unverified score feed. */
+/** Separate editing and coverage badges are generated only after CI verifies the signed receipt. */
 export function badgeMarkdown(owner: string, repo: string, _defaultBranch: string): string {
-  const badge = `https://raw.githubusercontent.com/${owner}/${repo}/pohw-badges/badge.svg`;
+  const base = `https://raw.githubusercontent.com/${owner}/${repo}/pohw-badges`;
   const report = `https://github.com/${owner}/${repo}/blob/pohw-badges/REPORT.md`;
   return [
     '<!-- pohw-badges:start -->',
-    `[![PoHW Human Editing Score and Monitored Coverage](${badge})](${report})`,
+    `[![PoHW Editing Evidence Score](${base}/editing.svg)](${report}) [![PoHW Monitored Coverage](${base}/coverage.svg)](${report})`,
     '<!-- pohw-badges:end -->'
   ].join('\n');
 }
