@@ -90,7 +90,42 @@ git show "FETCH_HEAD:receipts/$sha.json" > /tmp/pohw-receipt.json
 node .pohw/verify.cjs . /tmp/pohw-receipt.json /tmp/pohw-summary.json
 ```
 
-The verifier reads the committed Git tree and checks the receipt's Ed25519 signature and content digest.
+The public verifier checks the receipt's Ed25519 signature and committed content digest. Its output sets `scoreVerification: not-recomputed`; it does not have the local event log.
+
+### Independent event replay
+
+Version 0.4.0 stores a complete append-only JSONL journal in extension `globalStorage`. **Show Provenance Report → Local event log** displays its absolute path. The first record identifies `pohw-event-log/v1`, `rule-based-v0.1`, the log ID and UTF-16 offsets. Events include baselines, editor edits, external reconciliations, saves and session boundaries, with sequence, previous/event hashes and before/after content hashes. Only the recent-event UI view is capped; the journal is never pruned automatically.
+
+New receipt/v2 bodies include a signed `eventLog` commitment: log ID, algorithm, event count and tip. Receipt creation independently replays that persisted prefix and computes metrics for the exact Git commit. A later valid suffix does not change an older receipt. Already-published receipts remain immutable, including legacy receipts without replay commitments.
+
+After building this extension, an authorized verifier can run:
+
+```bash
+node /path/to/proof-of-human-work/extension/scripts/verify-event-log.cjs \
+  /path/to/source-repository \
+  /path/to/receipt.json \
+  /path/to/trusted-public-key.pem \
+  /path/to/local.events.jsonl
+```
+
+The repository must contain the receipt's target Git commit. Use the repository's registered public key. The command requires no VS Code host or private key. It verifies signature, source manifest, log identity, sequence, chain links, edit ranges, content hashes, session metadata and recomputed metrics. It exits nonzero on mismatch. JSON output contains commit metrics, file reports and segment offsets/lengths/scores/origins, without source text. Files whose replayed content differs from the commit are entirely Unverified for that commit, including partial staging.
+
+| Available evidence | Verification scope |
+| --- | --- |
+| Public receipt, registered key, Git commit | Signature and committed source; scores remain self-attested |
+| Above plus matching complete journal prefix | Event consistency, exact replay and recomputed segment/commit scores |
+
+Journal contents remain self-attested. An attacker controlling the machine and key can fabricate a new internally consistent history. P0 provides no trusted timestamp, remote checkpoint or proof of physical human input.
+
+### Storage and upgrade
+
+- Old `<workspace-id>.json` data is retained untouched. Without full historical edits, its scores cannot be replayed and are not imported. Current files establish new Unverified baselines.
+- Journals contain full baseline text and inserted/deleted historical code, potentially including secrets. They are never included in evidence pushes. Share only with authorized verifiers; closing VS Code before making a manual copy avoids a partial trailing line.
+- Recording appends synchronously; stop/receipt issuance flushes to disk. Memory retains current provenance plus a small UI event cache. Storage and startup replay time grow with the complete history.
+- A partial or corrupt log blocks monitoring and receipt issuance; it is not silently truncated or replaced. Preserve the file for inspection. Restoring a complete backup may recover an earlier valid prefix; it cannot recover later evidence that was lost.
+- One extension host may write a workspace journal at a time. A second host reports an evidence error; reload it after the first host exits. Locks from terminated processes are reclaimed. Inspect an unreadable/ambiguous lock, or a `.lock.recovery` guard left by a crash during recovery, before removing it manually.
+- Restart replays existing evidence and remains paused. Offline changes are reconciled as unverified; a previously unfinished session is closed at recovery time. Local timestamps are untrusted observations, including that recovery time.
+- Existing badge installations should regenerate their setup files with **Enable GitHub Badge** to display the updated verification scope.
 
 ## Operational notes
 

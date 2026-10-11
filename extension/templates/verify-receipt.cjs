@@ -14,5 +14,5 @@ try {
   verifySignedReceipt(receipt, publicKey, codeManifestForCommit(root, current));
   const summary = verifiedBadgeSummary(receipt, current);
   if (process.argv[4]) fs.writeFileSync(process.argv[4], JSON.stringify(summary, null, 2) + '\n');
-  console.log(`PoHW receipt verified; source commit=${current}; assurance=self-attested`);
+  console.log(`PoHW receipt verified; source commit=${current}; assurance=self-attested; score-verification=not-recomputed`);
 } catch (error) { console.error(`PoHW verification FAILED: ${error.message}`); process.exitCode = 1; }

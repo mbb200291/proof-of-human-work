@@ -109,6 +109,16 @@ test('badge end to end: init -> code commit -> separate evidence push -> standal
     assert.ok(summary.monitoredCoverage > 0);
     assert.equal(summary.sourceCommit, target);
     assert.equal(summary.assurance, 'self-attested');
+    assert.equal(summary.scoreVerification, 'not-recomputed');
+    const signed = JSON.parse(fs.readFileSync(receipt, 'utf8'));
+    assert.equal(signed.body.eventLog.schema, 'pohw-event-log/v1');
+    assert.equal(signed.body.eventLog.tip, signed.body.session.auditTip);
+    assert.equal(JSON.stringify(signed).includes(addition), false);
+    assert.deepEqual(git('ls-tree', '-r', '--name-only', 'refs/pohw/evidence').split('\n'), [evidencePath]);
+    const journal = path.join(storage, fs.readdirSync(storage).find(n => n.endsWith('.events.jsonl')));
+    const { verifyReplayReceipt } = require('../out/replay-proof');
+    const replayed = await verifyReplayReceipt(root, signed, fs.readFileSync(path.join(root, '.pohw/public-key.pem'), 'utf8'), journal);
+    assert.deepEqual(replayed.metrics, signed.body.metrics);
     fs.writeFileSync(receipt, fs.readFileSync(receipt, 'utf8').replace('self-attested-editor-behavior', 'tampered'));
     result = verify();
     assert.notEqual(result.status, 0);
