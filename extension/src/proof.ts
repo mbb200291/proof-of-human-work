@@ -3,6 +3,7 @@ import { createHash, createPrivateKey, createPublicKey, generateKeyPairSync, sig
 import { execFileSync } from 'node:child_process';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
+import type { LogCommitment } from './event-log';
 
 export const RECEIPT_VERSION = 'pohw-editing-receipt/v2';
 const EXCLUDED = new Set(['.git', '.pohw', 'node_modules', 'dist', 'out', 'build', 'coverage', '.venv', 'venv']);
@@ -98,6 +99,7 @@ export interface ReceiptBody {
   keyId: string;
   code: { rootHash: string; files: number; algorithm: CodeManifest['algorithm'] };
   metrics: { scorePercent: number | null; coveragePercent: number; units: number; monitoredUnits: number; algorithm: 'rule-based-v0.1' };
+  eventLog?: LogCommitment;
   session: { startedAt: string | null; endedAt: string | null; auditTip: string };
 }
 export interface SignedReceipt { body: ReceiptBody; signature: string }
@@ -127,6 +129,13 @@ export function verifySignedReceipt(receipt: SignedReceipt, publicKeyPem: string
     throw new Error('Receipt metrics are inconsistent');
   }
   if (!/^[a-f0-9]{64}$/.test(body.session?.auditTip ?? '') || !Number.isFinite(Date.parse(body.issuedAt))) throw new Error('Invalid receipt metadata');
+  if (body.eventLog !== undefined) {
+    const c = body.eventLog;
+    if (!c || c.schema !== 'pohw-event-log/v1' || c.algorithm !== m.algorithm ||
+        typeof c.logId !== 'string' || !/^[a-f0-9-]{36}$/.test(c.logId) ||
+        !Number.isSafeInteger(c.eventCount) || c.eventCount < 0 ||
+        !/^[a-f0-9]{64}$/.test(c.tip) || c.tip !== body.session.auditTip) throw new Error('Invalid event log commitment');
+  }
   let ok = false;
   try { ok = verify(null, Buffer.from(canonicalJson(body)), createPublicKey(publicKeyPem), Buffer.from(receipt.signature, 'base64')); } catch { /* reject */ }
   if (!ok) throw new Error('Receipt signature verification failed');
@@ -137,6 +146,8 @@ export function verifiedBadgeSummary(receipt: SignedReceipt, sourceCommit: strin
   return {
     verification: 'signature-and-content-valid',
     assurance: 'self-attested',
+    scoreVerification: 'not-recomputed',
+    eventLogAvailable: receipt.body.eventLog ? 'local-only' : 'not-committed',
     humanScore: receipt.body.metrics.scorePercent === null ? 'N/A' : receipt.body.metrics.scorePercent,
     monitoredCoverage: receipt.body.metrics.coveragePercent,
     sourceCommit,

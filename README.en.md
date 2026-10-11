@@ -3,7 +3,7 @@
 [繁體中文](README.md) · [English](README.en.md)
 
 [![VS Code Extension CI](https://github.com/mbb200291/proof-of-human-work/actions/workflows/vscode-extension.yml/badge.svg?branch=main)](https://github.com/mbb200291/proof-of-human-work/actions/workflows/vscode-extension.yml)
-[![Version](https://img.shields.io/badge/Coding%20Monitor-v0.3.3-blue)](https://github.com/mbb200291/proof-of-human-work)
+[![Version](https://img.shields.io/badge/Coding%20Monitor-v0.4.0-blue)](https://github.com/mbb200291/proof-of-human-work)
 [![License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
 **PoHW Coding Monitor** is a VS Code extension for tracking the provenance of source-code edits. It records document changes and saves, computes an editing-behavior evidence score, and issues signed records bound to Git commits.
@@ -13,6 +13,7 @@
 - **Edit monitoring** — Track document changes, saves, and provenance of surviving code spans.
 - **Editing evidence** — Report Human Editing Evidence Score, Monitored Coverage, and unverified code. Exact code moves can retain their attribution.
 - **Commit receipts** — Sign receipts with Ed25519 and store them on the independent `pohw-evidence` branch.
+- **Replayable evidence** — Keep a complete local journal; independently verify its chain and recompute segment scores.
 - **GitHub badge** — Verify signed receipts against source commits in GitHub Actions and publish a badge and report to `pohw-badges`.
 - **Local report** — View per-file scores and recent editing activity in a read-only VS Code Webview.
 
@@ -70,9 +71,9 @@ PoHW leaves your source branch and staging area untouched. While the extension i
 | **Monitored Coverage** | Proportion of current code with monitored provenance |
 | **Unverified** | Code without attributable editing evidence; not counted as 0% human |
 
-Scores are **uncalibrated heuristics**, not probabilities of human authorship. Receipts are self-attested using locally held keys. GitHub Actions verifies receipt signatures and consistency with the target commit. Simulated editing behavior and off-device AI assistance remain outside the current assurance.
+Scores are **uncalibrated heuristics**, not probabilities of human authorship. Receipts are self-attested using locally held keys. GitHub Actions verifies receipt signatures and consistency with the target commit; it does not recompute scores without the local journal. Simulated editing behavior and off-device AI assistance remain outside the current assurance.
 
-The extension stores tracked source text and statistics in local VS Code extension storage. Public receipts and badges do not include raw source files.
+The extension stores complete baselines and edit history, including deleted text, in local VS Code extension storage. The report shows the journal path. [Independent replay](extension/README.md#independent-event-replay) verifies the committed event prefix and recomputes scores. Legacy data is retained on upgrade; scores without complete events restart as unverified baselines. Public receipts and badges do not include raw source files.
 
 ## Development
 

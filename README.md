@@ -3,7 +3,7 @@
 [繁體中文](README.md) · [English](README.en.md)
 
 [![VS Code Extension CI](https://github.com/mbb200291/proof-of-human-work/actions/workflows/vscode-extension.yml/badge.svg?branch=main)](https://github.com/mbb200291/proof-of-human-work/actions/workflows/vscode-extension.yml)
-[![Version](https://img.shields.io/badge/Coding%20Monitor-v0.3.3-blue)](https://github.com/mbb200291/proof-of-human-work)
+[![Version](https://img.shields.io/badge/Coding%20Monitor-v0.4.0-blue)](https://github.com/mbb200291/proof-of-human-work)
 [![License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
 **PoHW Coding Monitor** 是追蹤程式碼編輯來源的 VS Code 外掛。透過編輯與存檔事件記錄程式碼形成過程，計算人類編輯行為特徵分數，並為 Git Commit 產生可驗證的簽署紀錄。
@@ -13,6 +13,7 @@
 - **編輯監控**：記錄文件變更與存檔，追蹤目前程式碼區段的來源。
 - **編輯證據評分**：提供 Human Editing Evidence Score、Monitored Coverage 與 Unverified 區段；相同內容的程式碼搬移可繼承來源紀錄。
 - **Commit 證據**：使用 Ed25519 簽署對應 Git Commit 的 Receipt，獨立保存至 `pohw-evidence` 分支。
+- **可重播證據**：本機保存完整事件日誌，可獨立驗證事件鏈並重算區段分數。
 - **GitHub 徽章**：由 GitHub Actions 驗證簽章與程式碼內容，在 `pohw-badges` 發布分數徽章及詳細報告。
 - **本機報告**：在 VS Code 唯讀 Webview 檢視各檔案評分與監控紀錄。
 
@@ -70,7 +71,7 @@ PoHW 不會替使用者提交或推送程式碼分支，也不會修改原有的
 | **Monitored Coverage** | 目前程式碼具有編輯來源紀錄的比例 |
 | **Unverified** | 缺乏可歸屬編輯紀錄的程式碼；不計為 0% 人類 |
 
-分數尚未經統計校準，**不代表人類撰寫機率**。Receipt 為本機金鑰簽發的自我聲明證據；GitHub Actions 驗證簽章與 Commit 內容一致性。現階段無法排除模擬編輯操作或外部 AI 輔助。
+分數尚未經統計校準，**不代表人類撰寫機率**。Receipt 為本機金鑰簽發的自我聲明證據；GitHub Actions 驗證簽章與 Commit 內容一致性，未取得本機日誌時不重算分數。現階段無法排除模擬編輯操作或外部 AI 輔助。
 
 外掛會將追蹤中的程式碼內容與統計資料保存在本機 VS Code Extension 儲存空間；公開 Receipt 與徽章不包含原始程式碼。
 
@@ -93,3 +94,9 @@ npm run package
 ## 授權
 
 [MIT](LICENSE)
+
+### 完整事件日誌
+
+v0.4.0 起，完整基準內容及編輯事件儲存在 VS Code 本機擴充套件儲存空間，路徑列於報告的 `Local event log`。公開 Receipt 僅記錄日誌識別碼、事件數及鏈尾摘要。授權驗證者取得日誌後，可使用[獨立重播指令](extension/README.md#independent-event-replay)核對事件鏈、檔案內容及分數。
+
+升級時會保留舊版資料；缺少完整事件的歷史分數重設為未驗證基準。日誌包含已刪除的原始碼，不會自動上傳。這項驗證可偵測證據不一致，無法排除整套紀錄重造或即時偽造事件。
