@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import { strict as assert } from 'node:assert';
-import { EditingEngine, textOf } from './core';
+import { EditingEngine, fileHash, sha256, textOf } from './core';
 const score = (e: EditingEngine) => e.report().score ?? 0;
 const append = (e: EditingEngine, path: string, text: string, time: number) =>
   e.apply(path, { start: textOf(e.ensure(path)).length, deleteCount: 0, insert: text }, time);
@@ -69,4 +69,32 @@ test('multichange range edits preserve exact UTF16 content', () => {
   const e = new EditingEngine(); e.ensure('a.ts', 'abc🚀XYZ');
   e.apply('a.ts', { start: 3, deleteCount: 2, insert: 'x' });
   assert.equal(textOf(e.ensure('a.ts')), 'abcxXYZ');
+});
+
+test('long edit sessions retain only bounded recent events and lazily compute hashes', () => {
+  const e = new EditingEngine();
+  const f = e.ensure('long.go', 'package main\n');
+  const initial = e.report();
+  assert.strictEqual(e.report(), initial, 'unchanged reports reuse the cached summary');
+  for (let i = 0; i < 2500; i++) {
+    e.apply('long.go', { start: textOf(f).length, deleteCount: 0, insert: 'x' }, i * 100);
+  }
+  assert.equal(e.events.length, 128, 'event memory remains bounded');
+  assert.equal(f.hash, '', 'full-file SHA-256 is deferred while editing');
+  assert.equal(fileHash(f), sha256(textOf(f)), 'save-time SHA-256 matches current text');
+  const fresh = e.report();
+  assert.notStrictEqual(fresh, initial, 'edits invalidate cached summaries');
+  assert.strictEqual(e.report(), fresh, 'repeated reads use cached summaries');
+  e.reconcile('long.go', textOf(f) + 'external');
+  assert.notStrictEqual(e.report(), fresh, 'external file changes also invalidate cached summaries');
+});
+
+test('explicit provenance restoration invalidates report cache', () => {
+  const e = new EditingEngine();
+  const f = e.ensure('a.ts', 'original');
+  assert.equal(e.report().coverage, 0);
+  f.segments = [{ text: 'original', score: 0.9, origin: 'incremental' }];
+  e.invalidateReport();
+  assert.equal(e.report().coverage, 1);
+  assert.equal(e.report().score, 0.9);
 });
