@@ -3,6 +3,7 @@ import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { sha256, EditingEngine, Edit, Origin, StoredFile, textOf } from './core';
+import { inheritSpans, loadCandidates, provenanceSnapshot, scoreSnapshot } from './provenance';
 import { badgeMarkdown, codeManifestForCommit, gitCommitFile, createLocalKeys, issueReceipt, keyFingerprint, ReceiptBody, updateBadgeReadme, verifySignedReceipt } from './proof';
 import { gitHead, writeEvidenceCommit, pushEvidence } from './evidence-git';
 
@@ -183,6 +184,8 @@ class Monitor implements vscode.Disposable {
     this.root = vscode.workspace.workspaceFolders[0];
     await this.load();
     await this.refreshBaseline(); // Reconcile any changes made while the extension was not active.
+    const currentHead = await this.getGitHead();
+    if (currentHead) void this.restoreCommitEvidence(currentHead);
     this.updateBar();
     const pattern = new vscode.RelativePattern(this.root, '**/*');
     const watcher = vscode.workspace.createFileSystemWatcher(pattern);
@@ -261,7 +264,11 @@ class Monitor implements vscode.Disposable {
     let action = '';
     try { action = execFileSync('git', ['reflog', '-1', '--format=%gs'], { cwd: this.root.uri.fsPath, encoding: 'utf8' }).trim(); }
     catch { /* no reflog; user can manually sync */ }
-    if (!/^(commit( \([^)]*\))?|merge|rebase \([^)]*\)|cherry-pick):/.test(action)) return;
+    if (!/^(commit( \([^)]*\))?|merge|rebase \([^)]*\)|cherry-pick):/.test(action)) {
+      // A checkout or switch changes HEAD, but is not a newly authored commit.
+      void this.restoreCommitEvidence(head);
+      return;
+    }
     let commits = [head];
     if (previous && /^[a-f0-9]{40}$/.test(previous)) {
       try {
@@ -386,6 +393,37 @@ class Monitor implements vscode.Disposable {
       void vscode.window.showInformationMessage('PoHW Badge enabled. Commit the one-time setup files normally; future commits generate separate signed evidence automatically.');
     } catch (err) { void vscode.window.showErrorMessage(`PoHW Badge initialization failed: ${(err as Error).message}`); }
   }
+  /** Restore signed segment evidence on branch checkout, without treating checkout as typing. */
+  private async restoreCommitEvidence(head: string): Promise<void> {
+    if (!this.root || this.syncing) return;
+    const root = this.root.uri.fsPath;
+    try {
+      await fs.access(this.repoPath('.pohw/public-key.pem'));
+      const { publicKeyPem } = await this.localKeyPair();
+      await this.registeredKey(publicKeyPem);
+      const manifest = codeManifestForCommit(root, head);
+      const candidates = loadCandidates(root, head, publicKeyPem, 64, true);
+      let changed = false;
+      for (const f of manifest.files) {
+        const content = gitCommitFile(root, head, f.path);
+        if (content === null) continue;
+        const dirty = vscode.workspace.textDocuments.some(d => d.isDirty && this.path(d.uri) === f.path);
+        if (dirty) continue;
+        const disk = await fs.readFile(this.repoPath(f.path), 'utf8').catch(() => null);
+        if (disk !== content) continue; // Never attribute files changed after the commit.
+        const tracked = this.engine.ensure(f.path, content);
+        if (textOf(tracked) !== content) this.engine.reconcile(f.path, content);
+        const matches = [...(candidates.get(f.path) ?? []), ...(candidates.get('@sha256:' + sha256(content)) ?? [])];
+        const newSpans = inheritSpans(content, tracked.segments, matches);
+        if (JSON.stringify(newSpans) !== JSON.stringify(tracked.segments)) {
+          tracked.segments = newSpans;
+          changed = true;
+        }
+      }
+      if (changed) { this.updateBar(); this.scheduleWrite(); }
+    } catch (error) { console.warn('PoHW could not restore commit provenance', error); }
+  }
+
   /** Sync an existing Git commit without modifying user HEAD, index, or worktree. */
   async syncEvidence(interactive = true, commitSha?: string): Promise<void> {
     if (!this.root || this.syncing) return;
@@ -396,33 +434,44 @@ class Monitor implements vscode.Disposable {
       const { privateKeyPem, publicKeyPem } = await this.localKeyPair();
       await this.registeredKey(publicKeyPem);
       const manifest = codeManifestForCommit(this.root.uri.fsPath, targetCommit);
-      const known = new Map(this.engine.report().files.map(f => [f.path, f]));
-      let units = 0, monitoredUnits = 0, weightedScore = 0;
+      // Reconstruct attributable spans from signed source-commit evidence, including other branches.
+      const candidates = loadCandidates(this.root.uri.fsPath, targetCommit, publicKeyPem);
+      const pieces = new Map<string, StoredFile['segments']>();
+      const commitText = new Map<string, string>();
       for (const f of manifest.files) {
         const content = gitCommitFile(this.root.uri.fsPath, targetCommit, f.path);
         if (content === null) throw new Error(`Unsupported Git content: ${f.path}`);
-        const size = [...content].reduce((n, ch) => n + (/\s/.test(ch) ? 0 : ch.length), 0);
-        units += size;
-        // A partial staging / unstaged modification cannot safely inherit the full buffer's score.
+        commitText.set(f.path, content);
         const tracked = this.engine.files.get(f.path);
-        const summary = known.get(f.path);
-        if (tracked && summary && textOf(tracked) === content && summary.units === size) {
-          monitoredUnits += summary.verifiedUnits;
-          weightedScore += (summary.score ?? 0) * summary.verifiedUnits;
-        }
+        const local = tracked && textOf(tracked) === content ? tracked.segments : null;
+        const matches = [...(candidates.get(f.path) ?? []), ...(candidates.get('@sha256:' + sha256(content)) ?? [])];
+        pieces.set(f.path, inheritSpans(content, local, matches));
       }
+      const provenance = provenanceSnapshot(manifest, pieces);
+      const metrics = scoreSnapshot(provenance, commitText);
       const body: ReceiptBody = {
-        schema: 'pohw-editing-receipt/v2', claim: 'self-attested-editor-behavior', targetCommit,
+        schema: 'pohw-editing-receipt/v3', claim: 'self-attested-editor-behavior', targetCommit,
         issuedAt: new Date().toISOString(), keyId: keyFingerprint(publicKeyPem),
         code: { rootHash: manifest.rootHash, files: manifest.files.length, algorithm: manifest.algorithm },
-        metrics: { scorePercent: monitoredUnits ? Math.round(weightedScore / monitoredUnits * 10000) / 100 : null,
-          coveragePercent: units ? Math.round(monitoredUnits / units * 10000) / 100 : 0,
-          units, monitoredUnits, algorithm: 'rule-based-v0.1' },
+        metrics: { ...metrics, algorithm: 'rule-based-v0.1' },
+        provenance,
         session: { startedAt: this.startedAt, endedAt: this.stoppedAt, auditTip: this.tip }
       };
       const receipt = issueReceipt(body, privateKeyPem);
-      verifySignedReceipt(receipt, publicKeyPem, manifest);
+      verifySignedReceipt(receipt, publicKeyPem, manifest, this.root.uri.fsPath);
       const result = writeEvidenceCommit(this.root.uri.fsPath, receipt, publicKeyPem);
+      // Show inherited evidence in the editor when this commit matches the saved workspace.
+      for (const f of manifest.files) {
+        const content = commitText.get(f.path)!;
+        const openDirty = vscode.workspace.textDocuments.some(d => d.isDirty && this.path(d.uri) === f.path);
+        if (openDirty) continue;
+        const disk = await fs.readFile(this.repoPath(f.path), 'utf8').catch(() => null);
+        if (disk !== content) continue;
+        const tracked = this.engine.ensure(f.path, content);
+        if (textOf(tracked) !== content) this.engine.reconcile(f.path, content);
+        tracked.segments = pieces.get(f.path)!;
+      }
+      this.updateBar(); this.scheduleWrite();
       // Keep proof locally even if push is not currently possible. The next sync retries.
       if (vscode.workspace.getConfiguration(CONFIG_SECTION).get<boolean>('evidenceAutoPush', true)) {
         pushEvidence(this.root.uri.fsPath);

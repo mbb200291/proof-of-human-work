@@ -3,7 +3,7 @@
 [繁體中文](README.md) · [English](README.en.md)
 
 [![VS Code Extension CI](https://github.com/mbb200291/proof-of-human-work/actions/workflows/vscode-extension.yml/badge.svg?branch=main)](https://github.com/mbb200291/proof-of-human-work/actions/workflows/vscode-extension.yml)
-[![Version](https://img.shields.io/badge/Coding%20Monitor-v0.3.4-blue)](https://github.com/mbb200291/proof-of-human-work)
+[![Version](https://img.shields.io/badge/Coding%20Monitor-v0.3.5-blue)](https://github.com/mbb200291/proof-of-human-work)
 [![License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
 **PoHW Coding Monitor** 是追蹤程式碼編輯來源的 VS Code 外掛。透過編輯與存檔事件記錄程式碼形成過程，計算人類編輯行為特徵分數，並為 Git Commit 產生可驗證的簽署紀錄。
@@ -61,6 +61,8 @@ Start Monitoring → 編輯、存檔 → Stop Monitoring
 ```
 
 PoHW 不會替使用者提交或推送程式碼分支，也不會修改原有的 Staging Area。外掛啟用期間約每 5 秒檢查新的本機 Commit；需要補同步時可執行 `PoHW: Sync Commit Evidence`。
+
+跨分支開發：新版 Receipt 保存已簽署的區段來源資料。Feature Branch 的證據可在 Merge、Fast-forward 或 Squash 後，依相同內容繼承到目標分支；無法比對的程式碼保持 Unverified。舊版 Receipt 因缺少區段資料，無法回填歷史來源。
 
 ## 指標與安全性
 

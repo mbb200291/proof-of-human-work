@@ -19,7 +19,7 @@ export function evidencePath(commit: string): string {
 }
 export function writeEvidenceCommit(root: string, receipt: SignedReceipt, publicKeyPem: string): { evidenceCommit: string; updated: boolean } {
   const target = receipt.body.targetCommit;
-  verifySignedReceipt(receipt, publicKeyPem, codeManifestForCommit(root, target));
+  verifySignedReceipt(receipt, publicKeyPem, codeManifestForCommit(root, target), root);
   const filename = evidencePath(target);
   let base: string | undefined;
   let local: string | undefined;
@@ -45,7 +45,7 @@ export function writeEvidenceCommit(root: string, receipt: SignedReceipt, public
     if (exists) {
       const prior = git(root, ['show', `${base}:${filename}`]);
       const priorReceipt = JSON.parse(prior) as SignedReceipt;
-      verifySignedReceipt(priorReceipt, publicKeyPem, codeManifestForCommit(root, target));
+      verifySignedReceipt(priorReceipt, publicKeyPem, codeManifestForCommit(root, target), root);
       if (local !== base) git(root, ['update-ref', EVIDENCE_REF, base, ...(local ? [local] : [])]);
       return { evidenceCommit: base, updated: false };
     }

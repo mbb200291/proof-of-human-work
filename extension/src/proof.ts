@@ -4,7 +4,7 @@ import { execFileSync } from 'node:child_process';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 
-export const RECEIPT_VERSION = 'pohw-editing-receipt/v2';
+export const RECEIPT_VERSION = 'pohw-editing-receipt/v3';
 const EXCLUDED = new Set(['.git', '.pohw', 'node_modules', 'dist', 'out', 'build', 'coverage', '.venv', 'venv']);
 const EXTENSIONS = new Set(['.go', '.ts', '.tsx', '.js', '.jsx', '.py', '.rs', '.java', '.c', '.h', '.cpp', '.hpp', '.cs', '.rb', '.php', '.swift', '.kt', '.kts', '.sh', '.sql', '.vue', '.svelte', '.html', '.css', '.json', '.yaml', '.yml', '.toml', '.md', '.xml', '.proto']);
 const sha256 = (data: Buffer | string): string => createHash('sha256').update(data).digest('hex');
@@ -90,8 +90,16 @@ export function createLocalKeys(): { privateKeyPem: string; publicKeyPem: string
   };
 }
 
+/** Complete signed span coverage for a committed source tree, without publishing source text. */
+export type ProvenanceOrigin = 'baseline' | 'incremental' | 'bulk' | 'move' | 'external';
+export interface ProvenanceSnapshot {
+  version: 1;
+  files: Array<{ path: string; spans: Array<[number, number | null, ProvenanceOrigin]> }>;
+}
+
 export interface ReceiptBody {
-  schema: typeof RECEIPT_VERSION;
+  schema: typeof RECEIPT_VERSION | 'pohw-editing-receipt/v2';
+  provenance?: ProvenanceSnapshot;
   claim: 'self-attested-editor-behavior';
   issuedAt: string;
   targetCommit: string;
@@ -108,10 +116,10 @@ export function issueReceipt(body: ReceiptBody, privateKeyPem: string): SignedRe
 }
 
 function validPercent(x: unknown): boolean { return typeof x === 'number' && Number.isFinite(x) && x >= 0 && x <= 100; }
-export function verifySignedReceipt(receipt: SignedReceipt, publicKeyPem: string, manifest: CodeManifest): void {
+export function verifySignedReceipt(receipt: SignedReceipt, publicKeyPem: string, manifest: CodeManifest, repositoryRoot?: string): void {
   if (!receipt || !receipt.body || typeof receipt.signature !== 'string') throw new Error('Malformed PoHW receipt');
   const body = receipt.body;
-  if (body.schema !== RECEIPT_VERSION || body.claim !== 'self-attested-editor-behavior') throw new Error('Unsupported PoHW receipt claim/schema');
+  if (!['pohw-editing-receipt/v2', RECEIPT_VERSION].includes(body.schema) || body.claim !== 'self-attested-editor-behavior') throw new Error('Unsupported PoHW receipt claim/schema');
   if (!/^[a-f0-9]{40}$/.test(body.targetCommit)) throw new Error('Invalid target commit in receipt');
   if (body.keyId !== keyFingerprint(publicKeyPem)) throw new Error('Receipt signer differs from registered public key');
   if (body.code.algorithm !== manifest.algorithm || body.code.rootHash !== manifest.rootHash || body.code.files !== manifest.files.length) {
@@ -130,6 +138,45 @@ export function verifySignedReceipt(receipt: SignedReceipt, publicKeyPem: string
   let ok = false;
   try { ok = verify(null, Buffer.from(canonicalJson(body)), createPublicKey(publicKeyPem), Buffer.from(receipt.signature, 'base64')); } catch { /* reject */ }
   if (!ok) throw new Error('Receipt signature verification failed');
+  // v2 receipts remain verifiable, but contain no inheritable span provenance.
+  if (body.schema === RECEIPT_VERSION) {
+    if (!repositoryRoot || !body.provenance || body.provenance.version !== 1 ||
+        !Array.isArray(body.provenance.files) || body.provenance.files.length !== manifest.files.length) {
+      throw new Error('Signed span provenance or repository root is missing');
+    }
+    let units = 0, monitored = 0, weighted = 0, count = 0;
+    for (let i = 0; i < manifest.files.length; i++) {
+      const f = manifest.files[i], from = body.provenance.files[i];
+      if (!from || from.path !== f.path || !Array.isArray(from.spans) || from.spans.length > 200000) {
+        throw new Error('Provenance path/span layout differs from committed source');
+      }
+      const content = gitCommitFile(repositoryRoot, body.targetCommit, f.path);
+      if (content === null || sha256(Buffer.from(content)) !== f.sha256) throw new Error('Committed source unavailable');
+      let offset = 0;
+      for (const span of from.spans) {
+        if (!Array.isArray(span) || span.length !== 3) throw new Error('Invalid provenance span');
+        const [length, score, origin] = span;
+        if (!Number.isSafeInteger(length) || length <= 0 || offset + length > content.length ||
+            !(score === null || (typeof score === 'number' && Number.isFinite(score) && score >= 0 && score <= 1)) ||
+            !['baseline', 'incremental', 'bulk', 'move', 'external'].includes(origin)) {
+          throw new Error('Invalid signed provenance data');
+        }
+        const size = content.slice(offset, offset + length).replace(/\s/g, '').length;
+        units += size;
+        if (score !== null) { monitored += size; weighted += score * size; }
+        offset += length;
+        count++;
+        if (count > 1000000) throw new Error('Provenance is too large');
+      }
+      if (offset !== content.length) throw new Error('Provenance span lengths mismatch');
+    }
+    const expectedCoverage = units ? Math.round(monitored / units * 10000) / 100 : 0;
+    const expectedScore = monitored ? Math.round(weighted / monitored * 10000) / 100 : null;
+    if (units !== m.units || monitored !== m.monitoredUnits ||
+        Math.abs(expectedCoverage - m.coveragePercent) > 0.001 || expectedScore !== m.scorePercent) {
+      throw new Error('Provenance does not match the signed score/coverage');
+    }
+  }
 }
 
 /** This is only ever published after the signed receipt was independently checked. */
@@ -145,7 +192,7 @@ export function verifiedBadgeSummary(receipt: SignedReceipt, sourceCommit: strin
   };
 }
 
-/** Separate editing and coverage badges are generated only after CI verifies the signed receipt. */
+/** CI issues independent editing/coverage badges only when the signed receipt verifies. */
 export function badgeMarkdown(owner: string, repo: string, _defaultBranch: string): string {
   const base = `https://raw.githubusercontent.com/${owner}/${repo}/pohw-badges`;
   const report = `https://github.com/${owner}/${repo}/blob/pohw-badges/REPORT.md`;
