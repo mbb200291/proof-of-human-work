@@ -2,7 +2,7 @@ import * as vscode from 'vscode';
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import { execFileSync } from 'node:child_process';
-import { sha256, EditingEngine, Edit, Origin, StoredFile, textOf } from './core';
+import { sha256, fileHash, EditingEngine, Edit, Origin, StoredFile, textOf } from './core';
 import { inheritSpans, loadCandidates, provenanceSnapshot, scoreSnapshot } from './provenance';
 import { badgeMarkdown, codeManifestForCommit, gitCommitFile, createLocalKeys, issueReceipt, keyFingerprint, ReceiptBody, updateBadgeReadme, verifySignedReceipt } from './proof';
 import { gitHead, writeEvidenceCommit, pushEvidence } from './evidence-git';
@@ -36,6 +36,9 @@ class Monitor implements vscode.Disposable {
   private seq = 0;
   private recentEvents: AuditEvent[] = [];
   private timer?: ReturnType<typeof setTimeout>;
+  private statusTimer?: ReturnType<typeof setTimeout>;
+  private lastPersistedAt = Date.now();
+  private pendingPersist: Promise<void> = Promise.resolve();
   private watchers: vscode.Disposable[] = [];
   private bar: vscode.StatusBarItem;
   private reportPanel?: vscode.WebviewPanel;
@@ -68,17 +71,41 @@ class Monitor implements vscode.Disposable {
   }
   private async write(): Promise<void> {
     if (!this.root) return;
+    const files = [...this.engine.files.values()];
+    // Complete only invalidated hashes; all prior editor edits remain in the signed audit chain.
+    for (const file of files) fileHash(file);
     const state: DiskState = {
       version: 1, root: this.root.uri.toString(), startedAt: this.startedAt,
       stoppedAt: this.stoppedAt, baselineHead: this.baselineHead,
-      tip: this.tip, seq: this.seq, files: [...this.engine.files.values()],
+      tip: this.tip, seq: this.seq, files,
       recentEvents: this.recentEvents
     };
-    await vscode.workspace.fs.writeFile(await this.storeFile(), Buffer.from(JSON.stringify(state)));
+    const bytes = Buffer.from(JSON.stringify(state));
+    // Serialize writes so an older snapshot cannot overwrite a newer one.
+    this.pendingPersist = this.pendingPersist.catch(() => {}).then(async () => {
+      await vscode.workspace.fs.writeFile(await this.storeFile(), bytes);
+      this.lastPersistedAt = Date.now();
+    });
+    await this.pendingPersist;
   }
   private scheduleWrite(): void {
     if (this.timer) clearTimeout(this.timer);
-    this.timer = setTimeout(() => { void this.write().then(() => {}, err => console.error('PoHW persistence failed', err)); }, 1000);
+    // Coalesce editing bursts; checkpoint at least once every 30 seconds of activity.
+    const delay = Math.min(5000, Math.max(0, 30_000 - (Date.now() - this.lastPersistedAt)));
+    this.timer = setTimeout(() => {
+      this.timer = undefined;
+      void this.write().catch(err => console.error('PoHW persistence failed', err));
+    }, delay);
+    this.timer.unref();
+  }
+  private scheduleStatusUpdate(): void {
+    if (this.statusTimer) return;
+    // Updating on every keystroke would traverse the entire provenance map.
+    this.statusTimer = setTimeout(() => {
+      this.statusTimer = undefined;
+      this.updateBar();
+    }, 350);
+    this.statusTimer.unref();
   }
   private async load(): Promise<void> {
     if (!this.root) return;
@@ -111,14 +138,14 @@ class Monitor implements vscode.Disposable {
     this.tip = sha256(this.tip + JSON.stringify(value));
     this.recentEvents.push({ ...value, hash: this.tip });
     if (this.recentEvents.length > 1000) this.recentEvents.shift();
-    this.updateBar();
+    this.scheduleStatusUpdate();
     this.scheduleWrite();
   }
   private recordEdit(path: string, e: Edit, external: boolean): void {
-    const f = this.engine.ensure(path);
-    const before = f.hash;
     const signal = this.engine.apply(path, e, Date.now(), external);
-    this.audit(path, signal.kind, before, f.hash, signal.added, signal.removed, signal.score);
+    // Hash only the edit operation in the event chain; materialize the full file hash on Save.
+    const delta = sha256(JSON.stringify({ start: e.start, deleted: e.deleteCount, inserted: e.insert }));
+    this.audit(path, signal.kind, '', delta, signal.added, signal.removed, signal.score);
   }
   private async readSource(uri: vscode.Uri): Promise<string | null> {
     try {
@@ -137,9 +164,9 @@ class Monitor implements vscode.Disposable {
     const content = deleted ? '' : await this.readSource(uri);
     if (content === null) return;
     const f = this.engine.ensure(path);
-    const before = f.hash;
+    const before = fileHash(f);
     if (this.engine.reconcile(path, content)) {
-      this.audit(path, 'external/unattributed', before, f.hash, content.length, 0, null);
+      this.audit(path, 'external/unattributed', before, fileHash(f), content.length, 0, null);
     }
   }
   private async initializeFile(uri: vscode.Uri): Promise<void> {
@@ -220,15 +247,15 @@ class Monitor implements vscode.Disposable {
             this.recordEdit(path, { start: change.rangeOffset, deleteCount: change.rangeLength, insert: change.text }, external);
           }
           if (textOf(tracked) !== event.document.getText()) {
-            const before = tracked.hash;
+            const before = fileHash(tracked);
             this.engine.reconcile(path, event.document.getText());
-            this.audit(path, 'unattributed-reconcile', before, tracked.hash, 0, 0, null);
+            this.audit(path, 'unattributed-reconcile', before, fileHash(tracked), 0, 0, null);
           }
         } catch (err) {
           console.warn('PoHW out-of-sync editor event', err);
-          const before = tracked.hash;
+          const before = fileHash(tracked);
           this.engine.reconcile(path, event.document.getText());
-          this.audit(path, 'unattributed-reconcile', before, tracked.hash, 0, 0, null);
+          this.audit(path, 'unattributed-reconcile', before, fileHash(tracked), 0, 0, null);
         }
       }),
       vscode.workspace.onDidOpenTextDocument(d => { if (this.active) void this.initializeFile(d.uri); }),
@@ -238,12 +265,13 @@ class Monitor implements vscode.Disposable {
         if (!path || !this.eligible(path)) return;
         const f = this.engine.ensure(path);
         if (textOf(f) !== d.getText()) {
-          const before = f.hash;
+          const before = fileHash(f);
           this.engine.reconcile(path, d.getText());
-          this.audit(path, 'unattributed-save', before, f.hash, 0, 0, null);
+          this.audit(path, 'unattributed-save', before, fileHash(f), 0, 0, null);
         }
         f.saves++;
-        this.audit(path, 'save', f.hash, f.hash, 0, 0, null);
+        const hash = fileHash(f);
+        this.audit(path, 'save', hash, hash, 0, 0, null);
       })
     );
     // Poll HEAD rather than watching .git/HEAD: regular branch commits update refs/heads/*, not HEAD.
@@ -298,6 +326,7 @@ class Monitor implements vscode.Disposable {
     this.audit('', 'session-stop', '', '', 0, 0, null);
     this.active = false; this.stoppedAt = new Date().toISOString();
     if (this.timer) clearTimeout(this.timer);
+    if (this.statusTimer) { clearTimeout(this.statusTimer); this.statusTimer = undefined; }
     await this.write(); this.updateBar();
     void vscode.window.showInformationMessage('PoHW monitoring stopped; provenance is saved locally.');
     await this.report();
@@ -420,7 +449,7 @@ class Monitor implements vscode.Disposable {
           changed = true;
         }
       }
-      if (changed) { this.updateBar(); this.scheduleWrite(); }
+      if (changed) { this.engine.invalidateReport(); this.updateBar(); this.scheduleWrite(); }
     } catch (error) { console.warn('PoHW could not restore commit provenance', error); }
   }
 
@@ -558,6 +587,7 @@ class Monitor implements vscode.Disposable {
 
   dispose(): void {
     if (this.timer) clearTimeout(this.timer);
+    if (this.statusTimer) clearTimeout(this.statusTimer);
     if (this.evidenceTimer) clearInterval(this.evidenceTimer);
     if (this.active) { this.active = false; this.stoppedAt = new Date().toISOString(); void this.write(); }
     this.reportPanel?.dispose();
