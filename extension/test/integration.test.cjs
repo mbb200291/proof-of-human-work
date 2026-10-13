@@ -1,6 +1,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const Module = require('node:module');
+const { createHash } = require('node:crypto');
 
 function uri(path) {
   return { scheme: 'file', fsPath: path, toString: () => 'file://' + path };
@@ -96,6 +97,10 @@ test('extension end-to-end: start → edit → save → report → stop and loca
     const stored = JSON.parse([...written.values()][0]);
     assert.ok(stored.seq >= 3);
     assert.equal(stored.files[0].path, 'example.ts');
+    const expectedHash = createHash('sha256').update(changed).digest('hex');
+    assert.equal(stored.files[0].hash, expectedHash, 'stop/checkpoint materializes the full SHA-256');
+    const saveEvent = stored.recentEvents.findLast(event => event.kind === 'save');
+    assert.equal(saveEvent.after, expectedHash, 'save audit event records the canonical document hash');
     for (const sub of context.subscriptions) sub.dispose?.();
   } finally {
     Module._load = originalLoad;
