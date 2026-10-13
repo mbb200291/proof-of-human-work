@@ -3,7 +3,7 @@
 [繁體中文](README.md) · [English](README.en.md)
 
 [![VS Code Extension CI](https://github.com/mbb200291/proof-of-human-work/actions/workflows/vscode-extension.yml/badge.svg?branch=main)](https://github.com/mbb200291/proof-of-human-work/actions/workflows/vscode-extension.yml)
-[![Version](https://img.shields.io/badge/Coding%20Monitor-v0.3.5-blue)](https://github.com/mbb200291/proof-of-human-work)
+[![Version](https://img.shields.io/badge/Coding%20Monitor-v0.3.6-blue)](https://github.com/mbb200291/proof-of-human-work)
 [![License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
 **PoHW Coding Monitor** 是追蹤程式碼編輯來源的 VS Code 外掛。透過編輯與存檔事件記錄程式碼形成過程，計算人類編輯行為特徵分數，並為 Git Commit 產生可驗證的簽署紀錄。
@@ -38,7 +38,7 @@
 | `PoHW: Enable GitHub Badge` | 初始化或更新目前 GitHub 專案的驗證設定 |
 | `PoHW: Sync Commit Evidence` | 手動補齊或重試 Commit 證據同步 |
 
-監控期間正常編輯、存檔即可。重新啟動 VS Code 後，需再次執行 Start Monitoring。
+監控期間正常編輯、存檔即可。重新啟動 VS Code 後，需再次執行 Start Monitoring。編輯事件採固定長度緩衝、延後更新狀態列及持久化，檔案雜湊在存檔／檢查點時更新。
 
 ## GitHub 徽章
 
