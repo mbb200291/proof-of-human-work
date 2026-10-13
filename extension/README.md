@@ -33,6 +33,15 @@ Use **Extensions: Install from VSIX...** for the generated package, or [download
 
 Sessions begin explicitly. Files present before monitoring remain Unverified until a tracked edit changes their provenance. Monitoring does not resume automatically after a VS Code restart.
 
+## Runtime performance
+
+- Monitoring remains **manual**. When paused, the extension still checks for Git commits roughly every five seconds in badge-enabled repositories.
+- In-memory core edit history is capped at 128 entries; recent user-facing audit events remain capped at 1,000. Scoring and signed receipts retain their existing provenance data.
+- Editing events update affected spans; whole-file SHA-256 is deferred until save or a persistence checkpoint. The hash-chained event log records the hashed edit delta between checkpoints.
+- Status-bar summaries are refreshed at most once per 350 ms during editing. Unchanged report results are cached.
+- Local state is written after five seconds of inactivity or at most 30 seconds of sustained editing. Stop Monitoring flushes immediately. Writes are serialized.
+- The diagnostic performance test reports elapsed time and heap growth for 2,000 edits in a 100 KiB file. Timings depend on the machine and are not used as release gates.
+
 ## Editing evidence
 
 - `onDidChangeTextDocument` records edit events; `onDidSaveTextDocument` records saves.
@@ -99,7 +108,7 @@ The verifier reads the committed Git tree and checks the receipt's Ed25519 signa
 - **Missing/transparent badges:** The latest receipt failed validation, or the badge branch has not been published. Inspect the repository's `PoHW Receipt Verification` workflow and check Actions write permissions.
 - **Stale badges:** GitHub image caches or workflow delays may delay an update. The report records the verified source commit.
 - **Missing evidence:** Synchronize the exact source commit and rerun CI.
-- **Existing badge installation:** After upgrading to v0.3.5, run **PoHW: Enable GitHub Badge** to update both the README badge block and CI workflow; review, commit, and push the generated changes once.
+- **Existing badge installation:** After upgrading to v0.3.6, run **PoHW: Enable GitHub Badge** to update both the README badge block and CI workflow; review, commit, and push the generated changes once.
 - **Signing keys:** The private key is stored in local VS Code extension `globalStorage`. Securely back it up. A lost key requires an explicit public-key rotation.
 
 ## Assurance and privacy
