@@ -246,11 +246,8 @@ class Monitor implements vscode.Disposable {
           for (const change of changes) {
             this.recordEdit(path, { start: change.rangeOffset, deleteCount: change.rangeLength, insert: change.text }, external);
           }
-          if (textOf(tracked) !== event.document.getText()) {
-            const before = fileHash(tracked);
-            this.engine.reconcile(path, event.document.getText());
-            this.audit(path, 'unattributed-reconcile', before, fileHash(tracked), 0, 0, null);
-          }
+          // Avoid reconstructing the full document on every keypress.
+          // The Save handler checks and reconciles the complete editor buffer.
         } catch (err) {
           console.warn('PoHW out-of-sync editor event', err);
           const before = fileHash(tracked);
