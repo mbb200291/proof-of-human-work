@@ -8,6 +8,11 @@ export interface StoredFile { path: string; segments: Segment[]; edits: number; 
 export interface FileReport { path: string; score: number | null; coverage: number; units: number; verifiedUnits: number; byOrigin: Record<Origin, number> }
 export const sha256 = (text: string): string => createHash('sha256').update(text).digest('hex');
 export const textOf = (file: StoredFile): string => file.segments.map(s => s.text).join('');
+/** The canonical file hash is materialized only at checkpoints (save/persistence). */
+export function fileHash(file: StoredFile): string {
+  if (!file.hash) file.hash = sha256(textOf(file));
+  return file.hash;
+}
 const clamp = (x: number): number => Math.max(0, Math.min(1, x));
 const weightedLength = (s: string): number => s.replace(/\s/g, '').length;
 const TYPES: Origin[] = ['baseline', 'incremental', 'bulk', 'move', 'external'];
@@ -49,20 +54,24 @@ export class EditingEngine {
   private cuts: Array<{ text: string; segments: Segment[]; at: number }> = [];
   private lastEdit = new Map<string, { at: number; start: number }>();
   readonly events: Array<{ path: string; signal: Signal; at: number }> = [];
+  private static readonly EVENT_LIMIT = 128;
+  private reportCache?: ReturnType<EditingEngine['computeReport']>;
+  /** Direct provenance restoration can replace segments without running apply(). */
+  invalidateReport(): void { this.reportCache = undefined; }
 
   constructor(initial: StoredFile[] = []) {
     for (const f of initial) this.files.set(f.path, f);
   }
   ensure(path: string, baseline = ''): StoredFile {
     let f = this.files.get(path);
-    if (!f) { f = newFile(path, baseline); this.files.set(path, f); }
+    if (!f) { f = newFile(path, baseline); this.files.set(path, f); this.invalidateReport(); }
     return f;
   }
   /** Event offsets use UTF-16 code units, identical to VS Code rangeOffset. */
   apply(path: string, edit: Edit, at = Date.now(), external = false): Signal {
     const file = this.ensure(path);
-    const before = textOf(file);
-    if (edit.start < 0 || edit.deleteCount < 0 || edit.start + edit.deleteCount > before.length) {
+    const length = file.segments.reduce((sum, segment) => sum + segment.text.length, 0);
+    if (edit.start < 0 || edit.deleteCount < 0 || edit.start + edit.deleteCount > length) {
       throw new Error('edit range outside tracked content');
     }
     const from = partition(file, edit.start);
@@ -108,11 +117,13 @@ export class EditingEngine {
     }
     file.segments.splice(from, to - from, ...inserted);
     file.segments = coalesce(file.segments);
-    file.hash = sha256(textOf(file));
+    file.hash = ''; // invalidate until the next save/checkpoint
     file.edits++;
     this.lastEdit.set(path, { at, start: edit.start });
     const signal: Signal = { kind, score, added: edit.insert.length, removed: edit.deleteCount };
     this.events.push({ path, signal, at });
+    if (this.events.length > EditingEngine.EVENT_LIMIT) this.events.shift();
+    this.invalidateReport();
     return signal;
   }
   /** Reconcile disk changes not represented by editor events (git checkout, agent write, etc). */
@@ -132,6 +143,9 @@ export class EditingEngine {
     return true;
   }
   report(): { score: number | null; coverage: number; units: number; verifiedUnits: number; files: FileReport[] } {
+    return this.reportCache ?? (this.reportCache = this.computeReport());
+  }
+  private computeReport(): { score: number | null; coverage: number; units: number; verifiedUnits: number; files: FileReport[] } {
     const files: FileReport[] = [];
     let weighted = 0, verifiedUnits = 0, units = 0;
     for (const f of this.files.values()) {
