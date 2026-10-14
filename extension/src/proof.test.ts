@@ -81,3 +81,17 @@ test('separate editing and coverage badges are idempotent and link to the verifi
   assert.throws(() => updateBadgeReadme('<!-- pohw-badges:start -->', md), /Malformed/);
   assert.equal(canonicalJson({ b: 2, a: [3, { y: 2, x: 1 }] }), canonicalJson({ a: [3, { x: 1, y: 2 }], b: 2 }));
 });
+
+
+test('v0.2 signed receipts verify while older v0.1 stays supported', () => {
+  const root=repository();
+  try {
+    const { keys, manifest, body, receipt }=sample(root);
+    verifySignedReceipt(receipt, keys.publicKeyPem, manifest);
+    const newer=issueReceipt({...body, metrics:{...body.metrics, algorithm:'rule-based-v0.2'}},keys.privateKeyPem);
+    verifySignedReceipt(newer,keys.publicKeyPem,manifest);
+    const invalid=issueReceipt({...body, metrics:{...body.metrics,
+      algorithm:'unknown-scorer' as 'rule-based-v0.2'}},keys.privateKeyPem);
+    assert.throws(()=>verifySignedReceipt(invalid,keys.publicKeyPem,manifest),/inconsistent/);
+  } finally { fs.rmSync(root,{recursive:true,force:true}); }
+});
