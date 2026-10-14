@@ -51,6 +51,7 @@ test('badge end to end: init -> code commit -> separate evidence push -> standal
         async createDirectory(u) { fs.mkdirSync(u.fsPath, { recursive: true }); }
       },
       createFileSystemWatcher() { return { ...dispose(), onDidChange: () => dispose(), onDidCreate: () => dispose(), onDidDelete: () => dispose() }; },
+      onDidRenameFiles() { return { dispose() {} }; },
       onDidChangeTextDocument(fn) { callbacks.change = fn; return dispose(); },
       onDidSaveTextDocument(fn) { callbacks.save = fn; return dispose(); },
       onDidOpenTextDocument(fn) { callbacks.open = fn; return dispose(); }
