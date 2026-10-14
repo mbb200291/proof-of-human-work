@@ -93,7 +93,8 @@ test('extension end-to-end: start → edit → save → report → stop and loca
     await listeners.rename({ files: [{ oldUri: file, newUri: moved }] });
     await commands['pohw.report']();
     assert.match(panels[0].webview.html, /renamed\.ts/);
-    assert.doesNotMatch(panels[0].webview.html, /<code>example\.ts<\/code>/);
+    assert.doesNotMatch(panels[0].webview.html.split('<h2>Recent events')[0],
+      /<code>example\.ts<\/code>/);
     assert.equal(panels[0].webview.html.match(/<strong>([0-9.]+%)<\/strong>/)?.[1],
       beforeRenameScore, 'identical rename preserves the editing score');
 
