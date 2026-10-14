@@ -170,6 +170,7 @@ class Monitor implements vscode.Disposable {
     const existing = this.engine.files.get(newPath);
     // File watchers can initialize a baseline before the rename notification.
     if (existing && existing.segments.some(s => s.score !== null)) return false;
+    this.engine.relocateBehavior(oldPath, newPath);
     this.engine.files.delete(oldPath);
     this.engine.files.set(newPath, { ...oldFile, path: newPath,
       segments, hash: sha256(nextText) });
@@ -542,7 +543,7 @@ class Monitor implements vscode.Disposable {
         schema: 'pohw-editing-receipt/v3', claim: 'self-attested-editor-behavior', targetCommit,
         issuedAt: new Date().toISOString(), keyId: keyFingerprint(publicKeyPem),
         code: { rootHash: manifest.rootHash, files: manifest.files.length, algorithm: manifest.algorithm },
-        metrics: { ...metrics, algorithm: 'rule-based-v0.1' },
+        metrics: { ...metrics, algorithm: 'rule-based-v0.2' },
         provenance,
         session: { startedAt: this.startedAt, endedAt: this.stoppedAt, auditTip: this.tip }
       };
@@ -613,7 +614,7 @@ class Monitor implements vscode.Disposable {
 <h1>PoHW Coding Provenance Report</h1>
 <div class="subtle">Read-only report · Status: ${this.active ? 'Recording' : 'Paused'}</div>
 <div class="metrics">
-  <div class="metric"><strong>${e(fmt(r.score))}</strong><span>Human editing evidence score (monitored code only)</span></div>
+  <div class="metric"><strong>${e(fmt(r.score))}</strong><span>Human editing evidence score · rule-based-v0.2 (monitored code only)</span></div>
   <div class="metric"><strong>${e(fmt(r.coverage))}</strong><span>Monitored coverage</span></div>
   <div class="metric"><strong>${r.units - r.verifiedUnits} / ${r.units}</strong><span>Unverified code (non-whitespace characters)</span></div>
 </div>

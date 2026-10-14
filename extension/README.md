@@ -45,7 +45,10 @@ Sessions begin explicitly. Files present before monitoring remain Unverified unt
 ## Editing evidence
 
 - `onDidChangeTextDocument` records edit events; `onDidSaveTextDocument` records saves.
-- A rule-based scorer considers change size and incremental edits, revisions, deletions, and exact text moves. Exact moves can inherit provenance.
+- The rule-based-v0.2 scorer analyzes local bursts (within 30 seconds and 160 UTF-16 positions), substantive revisions of older tracked content, and unusually regular or rapid timing.
+- Input-only scores are capped at 76%; qualified revisits of earlier monitored code can reach 88%. Timing anomalies receive a modest penalty, not an AI classification.
+- Revision bonuses require changed non-whitespace content and at least 60 seconds of age, with nearby repeat revisions limited to once per ten minutes.
+- Exact moves continue to inherit provenance. Previously stored v0.1 scores remain unchanged and are not retrospectively rescored.
 - Surviving text spans retain their tracked scores; external or unattributed changes remain Unverified.
 - **Human Editing Evidence Score** is calculated over attributed text only. **Monitored Coverage** measures the attributed share of current eligible code.
 - Counting uses non-whitespace UTF-16 code units. Coverage of 0% yields a score of N/A.
@@ -124,3 +127,10 @@ The extension stores **tracked source text** and activity metadata locally. Rece
 - If the destination was edited as part of the rename, only exact eligible unchanged lines retain attribution; new, changed, or ambiguous lines remain Unverified.
 - External file moves can preserve an exact match when only one previously tracked source path is missing. Git rename detection also supplies source-path hints after commit, but signed original evidence is required to inherit any score.
 - Moving a file does not produce new human editing evidence. Rename and move operations outside the monitored file set may lose coverage.
+
+
+### Scoring-version compatibility
+
+New Receipt v3 evidence uses metric algorithm `rule-based-v0.2`, while signed v0.1 receipts remain verifiable. A workspace may include unchanged historical v0.1 segments and newly scored v0.2 segments. Signed span snapshots retain scores and origins, but do not carry transient editing bursts or modification timestamps; recovered historical spans do not automatically earn new revision-age bonuses.
+
+After updating this extension, rerun **PoHW: Enable GitHub Badge** and commit the updated generated verifier/proof files so repositories can validate v0.2 metrics.

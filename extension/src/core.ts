@@ -1,10 +1,12 @@
 import { createHash } from 'node:crypto';
 
 export type Origin = 'baseline' | 'incremental' | 'bulk' | 'move' | 'external';
-export interface Segment { text: string; score: number | null; origin: Origin }
+export interface Segment { text: string; score: number | null; origin: Origin; createdAt?: number }
 export interface Edit { start: number; deleteCount: number; insert: string }
 export interface Signal { kind: 'incremental' | 'bulk' | 'move' | 'external'; score: number | null; added: number; removed: number }
 export interface StoredFile { path: string; segments: Segment[]; edits: number; saves: number; hash: string }
+interface Burst { at: number; start: number; edits: number; intervals: number[] }
+interface Revision { at: number; start: number }
 export interface FileReport { path: string; score: number | null; coverage: number; units: number; verifiedUnits: number; byOrigin: Record<Origin, number> }
 export const sha256 = (text: string): string => createHash('sha256').update(text).digest('hex');
 export const textOf = (file: StoredFile): string => file.segments.map(s => s.text).join('');
@@ -25,7 +27,7 @@ function coalesce(segments: Segment[]): Segment[] {
   for (const s of segments) {
     if (!s.text) continue;
     const prev = result[result.length - 1];
-    if (prev && prev.origin === s.origin && prev.score === s.score) prev.text += s.text;
+    if (prev && prev.origin === s.origin && prev.score === s.score && prev.createdAt === s.createdAt) prev.text += s.text;
     else result.push({ ...s });
   }
   return result;
@@ -52,7 +54,9 @@ function partition(file: StoredFile, pos: number): number {
 export class EditingEngine {
   files = new Map<string, StoredFile>();
   private cuts: Array<{ text: string; segments: Segment[]; at: number }> = [];
-  private lastEdit = new Map<string, { at: number; start: number }>();
+  // Bounded behavior state per tracked file; never used as standalone proof.
+  private bursts = new Map<string, Burst>();
+  private revisions = new Map<string, Revision[]>();
   readonly events: Array<{ path: string; signal: Signal; at: number }> = [];
   private static readonly EVENT_LIMIT = 128;
   private reportCache?: ReturnType<EditingEngine['computeReport']>;
@@ -66,6 +70,16 @@ export class EditingEngine {
     let f = this.files.get(path);
     if (!f) { f = newFile(path, baseline); this.files.set(path, f); this.invalidateReport(); }
     return f;
+  }
+  /** Follow file rename without treating it as a new editing event. */
+  relocateBehavior(oldPath: string, newPath: string): void {
+    if (oldPath === newPath) return;
+    const burst = this.bursts.get(oldPath);
+    const revisions = this.revisions.get(oldPath);
+    this.bursts.delete(oldPath);
+    this.revisions.delete(oldPath);
+    if (burst) this.bursts.set(newPath, burst);
+    if (revisions) this.revisions.set(newPath, revisions);
   }
   /** Event offsets use UTF-16 code units, identical to VS Code rangeOffset. */
   apply(path: string, edit: Edit, at = Date.now(), external = false): Signal {
@@ -102,24 +116,56 @@ export class EditingEngine {
       const count = meaningful.reduce((a, s) => a + weightedLength(s.text), 0);
       score = count ? meaningful.reduce((a, s) => a + weightedLength(s.text) * (s.score ?? 0), 0) / count : null;
     } else {
-      // Heuristic *evidence score*, not a calibrated probability of authorship.
-      // Large atomic insertions are consistent with paste/code generation.
+      // Editing behavior evidence, not a calibrated human-authorship probability.
       const size = weightedLength(edit.insert);
-      const prior = this.lastEdit.get(path);
-      const nearby = prior && at - prior.at < 120_000 && Math.abs(prior.start - edit.start) < 160;
-      score = size > 400 ? 0.10 : size > 100 ? 0.18 : size > 40 ? 0.38 : size > 12 ? 0.60 : 0.84;
-      if (size <= 12 && nearby) score += 0.10;
-      // A small, local revision adds weak process evidence, never certainty.
-      if (edit.deleteCount > 0 && size <= 40) score += 0.04;
-      score = clamp(score);
+      const prev = this.bursts.get(path);
+      const gap = prev ? at - prev.at : -1;
+      const nearby = !!prev && gap > 0 && gap <= 30_000 &&
+        Math.abs(prev.start - edit.start) < 160;
+      const burst: Burst = nearby
+        ? { at, start: edit.start, edits: Math.min(32, prev.edits + (size ? 1 : 0)),
+          intervals: [...prev.intervals.slice(-7), gap] }
+        : { at, start: edit.start, edits: size ? 1 : 0, intervals: [] };
+      this.bursts.set(path, burst);
+
+      const intervals = burst.intervals;
+      const periodic = intervals.length >= 8 && intervals[0] >= 30 &&
+        intervals[0] <= 2_000 && intervals.every(ms => Math.abs(ms - intervals[0]) <= 2);
+      const tooFast = intervals.length >= 6 &&
+        intervals.slice(-6).every(ms => ms <= 12);
+      const mechanical = periodic || tooFast;
+
+      // Only a substantive revisit of older attributed text is revision evidence.
+      // Previous scores and opaque baseline/external text cannot create this bonus.
+      const aged = removed.some(s => s.score !== null &&
+        s.createdAt !== undefined && at - s.createdAt >= 60_000);
+      const history = (this.revisions.get(path) ?? []).filter(r =>
+        at >= r.at && at - r.at < 600_000);
+      const repeated = history.some(r => Math.abs(r.start - edit.start) < 64);
+      const changed = deletedText.replace(/\s/g, '') !== edit.insert.replace(/\s/g, '');
+      const revised = size > 0 && size <= 40 && weightedLength(deletedText) >= 4 &&
+        aged && changed && !repeated;
+      if (revised) history.push({ at, start: edit.start });
+      this.revisions.set(path, history.slice(-32));
+
+      const base = size > 400 ? 0.10 : size > 100 ? 0.18 :
+        size > 40 ? 0.32 : size > 12 ? 0.48 : 0.60;
+      const continuity = size > 0 && size <= 40 ?
+        Math.min(0.16, Math.max(0, burst.edits - 1) * 0.04) : 0;
+      score = size ? clamp(Math.min(revised ? 0.88 : 0.76,
+        base + continuity + (revised ? 0.12 : 0))) : null;
+      // Timing alone is weak evidence: discount, do not categorically label AI.
+      if (mechanical && score !== null) score = Math.min(score, 0.45);
       kind = size > 40 ? 'bulk' : 'incremental';
-      inserted = edit.insert ? [{ text: edit.insert, score, origin: kind }] : [];
+      inserted = edit.insert ? [{
+        text: edit.insert, score, origin: kind,
+        ...(size ? { createdAt: Math.ceil(at / 60_000) * 60_000 } : {})
+      }] : [];
     }
     file.segments.splice(from, to - from, ...inserted);
     file.segments = coalesce(file.segments);
     file.hash = ''; // invalidate until the next save/checkpoint
     file.edits++;
-    this.lastEdit.set(path, { at, start: edit.start });
     const signal: Signal = { kind, score, added: edit.insert.length, removed: edit.deleteCount };
     this.events.push({ path, signal, at });
     if (this.events.length > EditingEngine.EVENT_LIMIT) this.events.shift();

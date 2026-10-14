@@ -18,14 +18,14 @@ test('case 1: agent writes files externally: no human score; one-shot huge edito
 test('case 2: incremental code with some Stack Overflow paste: higher score than bulk', () => {
   const e = new EditingEngine(); let t = 10000;
   for (let i = 0; i < 70; i++) {
-    append(e, 'main.ts', `let human${i} = ${i};\n`.slice(0, 12), t += 250);
-    append(e, 'main.ts', ` // edit${i}\n`, t += 250);
+    append(e, 'main.ts', `let human${i} = ${i};\n`.slice(0, 12), t += 220 + (i % 7) * 31);
+    append(e, 'main.ts', ` // edit${i}\n`, t += 220 + (i % 7) * 31);
   }
   append(e, 'main.ts', '// external code snippet\n'.repeat(20), t += 1000);
   // Revise around the imported block. Not all pasted content becomes human.
   const p = textOf(e.ensure('main.ts')).length;
   e.apply('main.ts', { start: p - 2, deleteCount: 0, insert: ' // fixed' }, t += 1200);
-  assert.ok(score(e) > 0.7, `score = ${score(e)}`);
+  assert.ok(score(e) > 0.53, `score = ${score(e)}`);
   assert.ok(score(e) < 0.95);
 });
 
@@ -97,4 +97,67 @@ test('explicit provenance restoration invalidates report cache', () => {
   e.invalidateReport();
   assert.equal(e.report().coverage, 1);
   assert.equal(e.report().score, 0.9);
+});
+
+
+test('burst continuity increases evidence, with input-only scores capped', () => {
+  const e=new EditingEngine(), values=[];
+  for(let i=0;i<10;i++) values.push(append(e,'typed.ts','x',1000+i*250+i*i*11).score);
+  assert.equal(values[0],0.60);
+  assert.ok(Math.abs((values[4]??0)-0.76)<1e-9);
+  assert.ok(values.every(x=>x!==null&&x<=0.76));
+});
+
+test('perfectly periodic and extremely fast inputs are weak negative signals', () => {
+  const natural=new EditingEngine(),periodic=new EditingEngine(),fast=new EditingEngine();
+  let time=1000;
+  for(let i=0;i<13;i++){
+    time+=180+i*17;
+    append(natural,'n.ts','x',time);
+    append(periodic,'p.ts','x',1000+i*250);
+    append(fast,'f.ts','x',1000+i*5);
+  }
+  assert.ok(score(natural)>score(periodic));
+  assert.ok(score(natural)>score(fast));
+  assert.ok(periodic.events.at(-1)!.signal.score!<=0.45);
+  assert.ok(fast.events.at(-1)!.signal.score!<=0.45);
+});
+
+test('revision requires old tracked code and rejects repeated nearby modifications', () => {
+  const e=new EditingEngine();
+  append(e,'rev.ts','let count = 10; let total = 50;',1000);
+  for(let i=0;i<5;i++) append(e,'rev.ts','x',160000+i*320);
+  const old=textOf(e.ensure('rev.ts'));
+  const first=e.apply('rev.ts',{start:old.indexOf('count'),deleteCount:5,insert:'items'},162000);
+  assert.ok(first.score!>0.76);
+  const second=e.apply('rev.ts',{start:textOf(e.ensure('rev.ts')).indexOf('total'),
+    deleteCount:5,insert:'price'},162300);
+  assert.ok(second.score!<=0.76);
+});
+
+test('baseline, no-op formatting, and immediate rewrites cannot create revision evidence', () => {
+  const baseline=new EditingEngine();
+  baseline.ensure('a.ts','counter');
+  assert.ok(baseline.apply('a.ts',{start:0,deleteCount:7,insert:'updated'},180000).score!<=0.76);
+  const recent=new EditingEngine();
+  append(recent,'a.ts','counter',1000);
+  assert.ok(recent.apply('a.ts',{start:0,deleteCount:7,insert:'updated'},1500).score!<=0.76);
+  const formatting=new EditingEngine();
+  append(formatting,'a.ts','count = 1',1000);
+  assert.ok(formatting.apply('a.ts',{start:0,deleteCount:9,insert:'count  =  1'},180000).score!<=0.76);
+});
+
+test('short-term behavior history follows renamed files and memory remains bounded', () => {
+  const e=new EditingEngine();
+  append(e,'old.ts','x',1000);
+  append(e,'old.ts','x',1300);
+  e.relocateBehavior('old.ts','new.ts');
+  const file=e.files.get('old.ts')!;
+  e.files.delete('old.ts');
+  file.path='new.ts';
+  e.files.set('new.ts',file);
+  assert.ok(append(e,'new.ts','x',1600).score!>0.60);
+  for(let i=0;i<3000;i++) append(e,'new.ts','x',2000+i*101);
+  assert.equal(e.events.length,128);
+  assert.equal(file.hash,'');
 });

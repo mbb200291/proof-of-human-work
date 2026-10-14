@@ -105,7 +105,7 @@ export interface ReceiptBody {
   targetCommit: string;
   keyId: string;
   code: { rootHash: string; files: number; algorithm: CodeManifest['algorithm'] };
-  metrics: { scorePercent: number | null; coveragePercent: number; units: number; monitoredUnits: number; algorithm: 'rule-based-v0.1' };
+  metrics: { scorePercent: number | null; coveragePercent: number; units: number; monitoredUnits: number; algorithm: 'rule-based-v0.1' | 'rule-based-v0.2' };
   session: { startedAt: string | null; endedAt: string | null; auditTip: string };
 }
 export interface SignedReceipt { body: ReceiptBody; signature: string }
@@ -126,7 +126,7 @@ export function verifySignedReceipt(receipt: SignedReceipt, publicKeyPem: string
     throw new Error('Code content does not match signed receipt (rerun PoHW Publish Signed Receipt)');
   }
   const m = body.metrics;
-  if (!m || m.algorithm !== 'rule-based-v0.1' || !Number.isSafeInteger(m.units) || !Number.isSafeInteger(m.monitoredUnits) ||
+  if (!m || !['rule-based-v0.1', 'rule-based-v0.2'].includes(m.algorithm) || !Number.isSafeInteger(m.units) || !Number.isSafeInteger(m.monitoredUnits) ||
       m.units < 0 || m.monitoredUnits < 0 || m.monitoredUnits > m.units ||
       !validPercent(m.coveragePercent) || (m.scorePercent !== null && !validPercent(m.scorePercent)) ||
       (m.monitoredUnits === 0 && m.scorePercent !== null) ||
