@@ -55,6 +55,7 @@ test('extension end-to-end: start → edit → save → report → stop and loca
       },
       createFileSystemWatcher() { return { ...disposable(), onDidChange() { return disposable(); }, onDidCreate() { return disposable(); }, onDidDelete() { return disposable(); } }; },
       onDidChangeTextDocument(cb) { listeners.change = cb; return disposable(); },
+      onDidRenameFiles(cb) { listeners.rename = cb; return disposable(); },
       onDidOpenTextDocument(cb) { listeners.open = cb; return disposable(); },
       onDidSaveTextDocument(cb) { listeners.save = cb; return disposable(); },
       async openTextDocument(options) { return options; }
@@ -85,6 +86,17 @@ test('extension end-to-end: start → edit → save → report → stop and loca
     assert.match(panels[0].webview.html, /Human editing evidence score/);
     assert.match(panels[0].webview.html, /Monitored coverage/);
     assert.match(panels[0].webview.html, /example\.ts/);
+    const beforeRenameScore = panels[0].webview.html.match(/<strong>([0-9.]+%)<\/strong>/)?.[1];
+    const moved = uri('/workspace/renamed.ts');
+    disk.delete(file.fsPath);
+    disk.set(moved.fsPath, changed);
+    await listeners.rename({ files: [{ oldUri: file, newUri: moved }] });
+    await commands['pohw.report']();
+    assert.match(panels[0].webview.html, /renamed\.ts/);
+    assert.doesNotMatch(panels[0].webview.html, /<code>example\.ts<\/code>/);
+    assert.equal(panels[0].webview.html.match(/<strong>([0-9.]+%)<\/strong>/)?.[1],
+      beforeRenameScore, 'identical rename preserves the editing score');
+
     await commands['pohw.report']();
     assert.equal(panels.length, 1, 'report must reuse one read-only Webview, not create an unsaved document');
     panels[0].dispose();
@@ -96,7 +108,7 @@ test('extension end-to-end: start → edit → save → report → stop and loca
     assert.equal(written.size, 1);
     const stored = JSON.parse([...written.values()][0]);
     assert.ok(stored.seq >= 3);
-    assert.equal(stored.files[0].path, 'example.ts');
+    assert.equal(stored.files[0].path, 'renamed.ts');
     const expectedHash = createHash('sha256').update(changed).digest('hex');
     assert.equal(stored.files[0].hash, expectedHash, 'stop/checkpoint materializes the full SHA-256');
     const saveEvent = stored.recentEvents.findLast(event => event.kind === 'save');
