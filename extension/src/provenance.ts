@@ -184,3 +184,29 @@ export function loadCandidates(root: string, target: string, publicKey: string, 
   }
   return buckets;
 }
+
+/** Git-detected parent-to-child renames; scores still require signed source spans. */
+export function renameSourcesForCommit(root: string, target: string): Map<string, string[]> {
+  const result = new Map<string, string[]>();
+  const git = (args: string[]) => execFileSync('git', args, {
+    cwd: root, encoding: 'utf8', timeout: 15_000, maxBuffer: 8 * 1024 * 1024
+  });
+  const parents = git(['rev-list', '--parents', '-n', '1', target]).trim().split(/\s+/).slice(1, 9);
+  for (const parent of parents) {
+    const tokens = git(['diff', '--find-renames=50%', '--name-status', '-z',
+      parent, target, '--']).split('\0');
+    for (let i = 0; i < tokens.length;) {
+      const status = tokens[i++];
+      if (!status) continue;
+      if (/^R[0-9]{1,3}$/.test(status)) {
+        const oldPath = tokens[i++], newPath = tokens[i++];
+        if (!oldPath || !newPath) continue;
+        const list = result.get(newPath) ?? [];
+        if (!list.includes(oldPath)) list.push(oldPath);
+        result.set(newPath, list);
+      } else if (/^C[0-9]{1,3}$/.test(status)) i += 2;
+      else i++;
+    }
+  }
+  return result;
+}

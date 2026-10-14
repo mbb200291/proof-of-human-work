@@ -116,3 +116,11 @@ The verifier reads the committed Git tree and checks the receipt's Ed25519 signa
 The score is an **uncalibrated editing-behavior heuristic**. Signatures confirm attribution to a locally held key and correspondence with the committed source code. AI agents can simulate small editor events, and off-device AI assistance cannot be excluded. No statistically calibrated human-authorship probability or 95% confidence interval is provided.
 
 The extension stores **tracked source text** and activity metadata locally. Receipts and badges do not contain raw source text. Limit use to projects compatible with these local retention requirements. Multi-cursor edits, formatter output, branch switches and other complex editing patterns can be classified conservatively.
+
+
+## Renaming and moving tracked files
+
+- A VS Code file rename/move immediately transfers scored spans when content is identical.
+- If the destination was edited as part of the rename, only exact eligible unchanged lines retain attribution; new, changed, or ambiguous lines remain Unverified.
+- External file moves can preserve an exact match when only one previously tracked source path is missing. Git rename detection also supplies source-path hints after commit, but signed original evidence is required to inherit any score.
+- Moving a file does not produce new human editing evidence. Rename and move operations outside the monitored file set may lose coverage.

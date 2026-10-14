@@ -7,7 +7,7 @@ import * as path from 'node:path';
 import { Segment } from './core';
 import { codeManifestForCommit, createLocalKeys, gitCommitFile, issueReceipt, keyFingerprint,
   ReceiptBody, verifySignedReceipt } from './proof';
-import { inheritSpans, loadCandidates, provenanceSnapshot, scoreSnapshot } from './provenance';
+import { inheritSpans, loadCandidates, renameSourcesForCommit, provenanceSnapshot, scoreSnapshot } from './provenance';
 import { writeEvidenceCommit, pushEvidence } from './evidence-git';
 
 function setup() {
@@ -140,4 +140,41 @@ test('reordered unique lines inherit evidence without copying duplicate boilerpl
   assert.equal(result.map(s=>s.text).join(''),target);
   assert.ok(result.some(s=>s.score===0.91));
   assert.ok(result.some(s=>s.score===null));
+});
+
+test('git rename with edits inherits signed unchanged lines, not rewritten lines', () => {
+  const env=setup();
+  try {
+    const {root,run,sign,keys}=env;
+    const original=[
+      'export const first = "distinct_old_source_111";',
+      'export const second = "distinct_old_source_222";',
+      'export const third = "distinct_old_source_333";',
+      'export const fourth = "distinct_old_source_444";',
+      'export const fifth = "distinct_old_source_555";',
+      'export const sixth = "distinct_old_source_666";'
+    ].join('\n')+'\n';
+    fs.writeFileSync(path.join(root,'old.ts'),original);
+    run('add','old.ts');run('commit','-qm','tracked original');
+    const oldCommit=run('rev-parse','HEAD');
+    sign(oldCommit,new Map([
+      ['code.ts',[{text:gitCommitFile(root,oldCommit,'code.ts')!,score:null,origin:'baseline'}]],
+      ['old.ts',[{text:original,score:0.86,origin:'incremental'}]]
+    ]));
+    fs.mkdirSync(path.join(root,'lib'));
+    run('mv','old.ts','lib/moved.ts');
+    const rewritten=original.replace('distinct_old_source_333','distinct_new_source_333');
+    fs.writeFileSync(path.join(root,'lib/moved.ts'),rewritten);
+    run('add','-A');run('commit','-qm','move and edit');
+    const target=run('rev-parse','HEAD');
+    const renameHints=renameSourcesForCommit(root,target);
+    assert.ok(renameHints.get('lib/moved.ts')?.includes('old.ts'));
+    const sourceCandidates=loadCandidates(root,target,keys.publicKeyPem);
+    const matched=(renameHints.get('lib/moved.ts')??[])
+      .flatMap(oldPath=>sourceCandidates.get(oldPath)??[]);
+    const result=inheritSpans(rewritten,null,matched);
+    assert.equal(result.map(s=>s.text).join(''),rewritten);
+    assert.ok(result.some(s=>s.score===0.86),'unchanged lines must retain score');
+    assert.ok(result.some(s=>s.score===null),'modified line must be unverified');
+  } finally {fs.rmSync(env.tmp,{recursive:true,force:true});}
 });
