@@ -3,7 +3,7 @@ import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { sha256, fileHash, EditingEngine, Edit, Origin, StoredFile, textOf } from './core';
-import { inheritSpans, loadCandidates, provenanceSnapshot, scoreSnapshot } from './provenance';
+import { inheritSpans, loadCandidates, renameSourcesForCommit, provenanceSnapshot, scoreSnapshot } from './provenance';
 import { badgeMarkdown, codeManifestForCommit, gitCommitFile, createLocalKeys, issueReceipt, keyFingerprint, ReceiptBody, updateBadgeReadme, verifySignedReceipt } from './proof';
 import { gitHead, writeEvidenceCommit, pushEvidence } from './evidence-git';
 
@@ -155,6 +155,50 @@ class Monitor implements vscode.Disposable {
       return Buffer.from(data).toString('utf8');
     } catch { return null; }
   }
+
+  /** Path changes preserve existing proof; changed and ambiguous lines are unverified. */
+  private relocate(oldPath: string, newPath: string, nextText: string): boolean {
+    if (oldPath === newPath) return false;
+    const oldFile = this.engine.files.get(oldPath);
+    if (!oldFile || !this.eligible(newPath)) return false;
+    const original = textOf(oldFile);
+    const segments = original === nextText ? oldFile.segments.map(s => ({ ...s }))
+      : inheritSpans(nextText, null, [{
+        commit: 'local-rename', file: oldPath, content: original,
+        segments: oldFile.segments.map(s => ({ ...s }))
+      }]);
+    const existing = this.engine.files.get(newPath);
+    // File watchers can initialize a baseline before the rename notification.
+    if (existing && existing.segments.some(s => s.score !== null)) return false;
+    this.engine.files.delete(oldPath);
+    this.engine.files.set(newPath, { ...oldFile, path: newPath,
+      segments, hash: sha256(nextText) });
+    this.engine.invalidateReport();
+    this.audit(newPath, original === nextText ? 'rename' : 'rename-with-edits',
+      sha256(original), sha256(nextText), 0, 0, null);
+    return true;
+  }
+  private async handleRename(files: readonly { oldUri: vscode.Uri; newUri: vscode.Uri }[]): Promise<void> {
+    for (const file of files) {
+      const from = this.path(file.oldUri), to = this.path(file.newUri);
+      if (!from || !to || !this.eligible(from) || !this.eligible(to)) continue;
+      const content = await this.readSource(file.newUri);
+      if (content !== null) this.relocate(from, to, content);
+    }
+  }
+  private async findExternalMove(target: string, content: string): Promise<string | null> {
+    // Only a missing, uniquely matching old file can be treated as an exact move.
+    const candidates = [...this.engine.files.values()].filter(f =>
+      f.path !== target && textOf(f) === content);
+    const missing: string[] = [];
+    for (const candidate of candidates) {
+      try { await fs.access(this.repoPath(candidate.path)); }
+      catch (err) {
+        if ((err as NodeJS.ErrnoException).code === 'ENOENT') missing.push(candidate.path);
+      }
+    }
+    return missing.length === 1 ? missing[0] : null;
+  }
   private async diskChange(uri: vscode.Uri, deleted = false): Promise<void> {
     if (!this.active) return;
     const path = this.path(uri);
@@ -163,6 +207,11 @@ class Monitor implements vscode.Disposable {
     if (open?.isDirty) return; // Never judge an unsaved buffer using disk state.
     const content = deleted ? '' : await this.readSource(uri);
     if (content === null) return;
+    if (deleted && !this.engine.files.has(path)) return;
+    if (!deleted && !this.engine.files.has(path)) {
+      const old = await this.findExternalMove(path, content);
+      if (old && this.relocate(old, path, content)) return;
+    }
     const f = this.engine.ensure(path);
     const before = fileHash(f);
     if (this.engine.reconcile(path, content)) {
@@ -182,6 +231,7 @@ class Monitor implements vscode.Disposable {
     const include = new vscode.RelativePattern(this.root, conf.get<string>('include', '**/*'));
     const exclude = conf.get<string>('exclude', '**/{.git,node_modules,dist,out,build,coverage,.venv,venv,.pohw}/**');
     const found = await vscode.workspace.findFiles(include, exclude, conf.get<number>('maxFiles', 2000));
+    const present = new Set(found.map(uri => this.path(uri)));
     for (const uri of found) {
       const path = this.path(uri);
       if (!path || !this.eligible(path)) continue;
@@ -189,8 +239,13 @@ class Monitor implements vscode.Disposable {
       if (text === null) continue;
       const existing = this.engine.files.get(path);
       if (existing && textOf(existing) === text) continue; // Preserve prior provenance.
-      if (!existing) this.engine.ensure(path, text);
-      else this.engine.reconcile(path, text); // Any change while monitoring was off is unverified.
+      if (!existing) {
+        const possible = [...this.engine.files.values()].filter(f =>
+          !present.has(f.path) && textOf(f) === text);
+        if (possible.length !== 1 || !this.relocate(possible[0].path, path, text)) {
+          this.engine.ensure(path, text);
+        }
+      } else this.engine.reconcile(path, text); // Any change while monitoring was off is unverified.
     }
     for (const path of [...this.engine.files.keys()]) {
       if (!found.some(uri => this.path(uri) === path)) {
@@ -219,7 +274,9 @@ class Monitor implements vscode.Disposable {
     this.watchers.push(watcher,
       watcher.onDidCreate(uri => { void this.diskChange(uri); }),
       watcher.onDidChange(uri => { setTimeout(() => { void this.diskChange(uri); }, 300); }),
-      watcher.onDidDelete(uri => { void this.diskChange(uri, true); }),
+      // Defer deletion briefly so a move can transfer the source before it is cleared.
+      watcher.onDidDelete(uri => { setTimeout(() => { void this.diskChange(uri, true); }, 400); }),
+      vscode.workspace.onDidRenameFiles(event => { void this.handleRename(event.files); }),
       vscode.workspace.onDidChangeTextDocument(event => {
         if (!this.active || !event.contentChanges.length) return;
         const path = this.path(event.document.uri);
@@ -429,6 +486,7 @@ class Monitor implements vscode.Disposable {
       await this.registeredKey(publicKeyPem);
       const manifest = codeManifestForCommit(root, head);
       const candidates = loadCandidates(root, head, publicKeyPem, 64, true);
+      const renames = renameSourcesForCommit(root, head);
       let changed = false;
       for (const f of manifest.files) {
         const content = gitCommitFile(root, head, f.path);
@@ -439,7 +497,9 @@ class Monitor implements vscode.Disposable {
         if (disk !== content) continue; // Never attribute files changed after the commit.
         const tracked = this.engine.ensure(f.path, content);
         if (textOf(tracked) !== content) this.engine.reconcile(f.path, content);
-        const matches = [...(candidates.get(f.path) ?? []), ...(candidates.get('@sha256:' + sha256(content)) ?? [])];
+        const matches = [...(candidates.get(f.path) ?? []),
+          ...(candidates.get('@sha256:' + sha256(content)) ?? []),
+          ...(renames.get(f.path) ?? []).flatMap(old => candidates.get(old) ?? [])];
         const newSpans = inheritSpans(content, tracked.segments, matches);
         if (JSON.stringify(newSpans) !== JSON.stringify(tracked.segments)) {
           tracked.segments = newSpans;
@@ -462,6 +522,7 @@ class Monitor implements vscode.Disposable {
       const manifest = codeManifestForCommit(this.root.uri.fsPath, targetCommit);
       // Reconstruct attributable spans from signed source-commit evidence, including other branches.
       const candidates = loadCandidates(this.root.uri.fsPath, targetCommit, publicKeyPem);
+      const renames = renameSourcesForCommit(this.root.uri.fsPath, targetCommit);
       const pieces = new Map<string, StoredFile['segments']>();
       const commitText = new Map<string, string>();
       for (const f of manifest.files) {
@@ -470,7 +531,9 @@ class Monitor implements vscode.Disposable {
         commitText.set(f.path, content);
         const tracked = this.engine.files.get(f.path);
         const local = tracked && textOf(tracked) === content ? tracked.segments : null;
-        const matches = [...(candidates.get(f.path) ?? []), ...(candidates.get('@sha256:' + sha256(content)) ?? [])];
+        const matches = [...(candidates.get(f.path) ?? []),
+          ...(candidates.get('@sha256:' + sha256(content)) ?? []),
+          ...(renames.get(f.path) ?? []).flatMap(old => candidates.get(old) ?? [])];
         pieces.set(f.path, inheritSpans(content, local, matches));
       }
       const provenance = provenanceSnapshot(manifest, pieces);
