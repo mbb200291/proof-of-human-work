@@ -276,7 +276,7 @@ class Monitor implements vscode.Disposable {
       watcher.onDidChange(uri => { setTimeout(() => { void this.diskChange(uri); }, 300); }),
       // Defer deletion briefly so a move can transfer the source before it is cleared.
       watcher.onDidDelete(uri => { setTimeout(() => { void this.diskChange(uri, true); }, 400); }),
-      vscode.workspace.onDidRenameFiles(event => { void this.handleRename(event.files); }),
+      vscode.workspace.onDidRenameFiles(event => this.handleRename(event.files)),
       vscode.workspace.onDidChangeTextDocument(event => {
         if (!this.active || !event.contentChanges.length) return;
         const path = this.path(event.document.uri);
